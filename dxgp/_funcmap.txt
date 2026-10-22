@@ -1,0 +1,271 @@
+  163  def _slippage_for(price):
+  643  def _prod_of(code=''):
+  666  def fee_profile(code=''):
+  687  class _G(object):
+  778  def _flush_log(force=False):
+  821  def log(*a):
+  839  def _fmt_param(v):
+  855  def trigger_log(trigger, action, detail, **params):
+  875  def _account_suffix():
+  892  def _split_name(raw):
+  898  def _join_base(name):
+  909  def state_path():
+  915  def run_log_path():
+  927  def file_base_dir():
+  943  def startup_selftest():
+  978  def names_cache_path():
+  983  def _flush_names_cache(force=False):
+ 1007  def _load_names_cache(st):
+ 1033  def _merge_external_daily_buys():
+ 1089  def _disk_adjust_daily_buy(delta, code=''):
+ 1120  def save_state(critical=False):
+ 1188  def _state_load_candidates():
+ 1207  def load_state():
+ 1258  def _blocked_ip(ip):
+ 1268  def notify(text):
+ 1315  def notify_enqueue(text):
+ 1330  def notify_drain(max_items=3, max_seconds=5.0):
+ 1343  def elapsed_trading_minutes(now):
+ 1360  def _proj_vol_ratio(elap_min):
+ 1389  def _df_to_rows(df):
+ 1409  def _bars_to_dict(df):
+ 1440  def _f(x):
+ 1449  def _bar_dt_min(k):
+ 1489  def _bar_dt_date(k):
+ 1512  def _is_today_bar(k, today):
+ 1521  def _bardate_loose(k):
+ 1556  def _is_bar_fresh(k, now=None, tolerance_sec=None):
+ 1592  def _subscribe_quotes(watch):
+ 1674  def _refresh_ticks(watch):
+ 1926  def _round2(x):
+ 1930  def flush_st_coef_note():
+ 1968  def _zt_coef(code, trade_date='', name_at_date=None):
+ 2004  def inst_name(stock):
+ 2041  def is_st_name(name):
+ 2055  def excluded(stock):
+ 2066  def can_trade():
+ 2073  def probe_account():
+ 2085  def _band_pct(code):
+ 2105  def day_limit_prices(code):
+ 2118  def clamp_order_price(px, tick, is_buy, code=''):
+ 2154  def held_trd_days(buy_date):
+ 2168  def fmt_pnl(pnl, pct):
+ 2177  def ledger_path():
+ 2182  def _transfer_rate_for(code):
+ 2199  def fee_buy(amount, code=''):
+ 2210  def fee_sell(amount, code=''):
+ 2223  def pos_vol(h):
+ 2231  def pos_cost(h):
+ 2241  def min_profit_pct(h, code=''):
+ 2258  def net_pnl_if_sell(h, lp, code=''):
+ 2274  def is_at_loss(h, lp):
+ 2300  def loss_cost_basis(h):
+ 2309  def pnl_stat():
+ 2329  def pnl_meta():
+ 2344  def pnl_base_asset(cur_asset=0.0):
+ 2358  def pnl_mode_note():
+ 2363  def pnl_pct_of(pnl, base):
+ 2367  def fmt_money(v):
+ 2371  def pnl_level(pct, step_ratio):
+ 2377  def _safe_rollback_placeholder(s):
+ 2396  def is_own_position(h):
+ 2405  def mode_pos_count(extra=0):
+ 2412  def pnl_alert(text):
+ 2425  def loss_data_source_alert(ok, probe_n=0, detail=''):
+ 2445  def used_capital():
+ 2473  def abs_cap_left(price):
+ 2488  def data_gate():
+ 2532  def data_quality_alert(note):
+ 2545  def param_fingerprint():
+ 2583  def ledger_append(rec):
+ 2622  def ledger_buy(s, h, price, vol, reason, npos_before, was_new=True, pos_before=0):
+ 2641  def ledger_sell(s, h, price, vol, reason, npos_before):
+ 2681  def _deal_diag_log(msg):
+ 2693  def _deal_field_sample(d):
+ 2709  def _find_manual_sell_deal(code):
+ 2761  def estimate_close(s, h, note=''):
+ 2858  def alert_open(rec, cash_before=0.0, cash_after=0.0):
+ 2877  def alert_close(rec, cash_before=0.0, cash_after=0.0):
+ 2898  def alert_unreal(s, h, lp, mv, unreal, pct, days, kind, level, step):
+ 2916  def alert_portfolio(snap, sig, level):
+ 2943  def _ledger_today_counts():
+ 2964  def _ledger_today_pnl():
+ 2982  def alert_daily_report(snap):
+ 3018  def pnl_halfhour_report(snap):
+ 3089  def pnl_brief():
+ 3103  def strategy_status_signature(phase=None):
+ 3130  def strategy_pnl_value():
+ 3139  def status_log_if_changed(phase=None, force=False):
+ 3162  def pnl_startup_note():
+ 3194  def pnl_tick():
+ 3231  def _pnl_tick_unlocked(ticks=None):
+ 3420  def size_equity():
+ 3448  def atr_of(s):
+ 3488  def last_close_of(s):
+ 3500  def sell_stall_confirmed(s, h, lp, t):
+ 3537  def calc_stop_pct(atr_pct):
+ 3542  def calc_size(s, price, atr, atr_pct, eq, cash):
+ 3653  def lock_state():
+ 3666  def trd_days_after(ymd, n):
+ 3673  def pause_until(ymd, n):
+ 3688  def in_pause(until):
+ 3698  def market_tide_check():
+ 3771  def pos_limit():
+ 3774  def _parse_emergency_text(raw):
+ 3797  def emergency_mode_effective():
+ 3836  def emergency_block(side):
+ 3858  def can_open_new():
+ 3922  def settle_pending(pos_total):
+ 3948  def settle_after_close(s, pnl, round_fee):
+ 3999  def handoff_records():
+ 4007  def is_handoff(h):
+ 4011  def handoff_credit():
+ 4025  def eff_cash(cash):
+ 4036  def exit_price_needed(h):
+ 4058  def trap_metrics(s, h, lp):
+ 4069  def trap_gap_ok(last_date, n):
+ 4087  def manual_alert_path():
+ 4092  def write_manual_todo():
+ 4129  def fire_trap_alert(s, h, lp, kind, reason):
+ 4169  def blacklist_add(s, reason):
+ 4206  def blacklist_remove_tagged(s):
+ 4235  def handoff_position(s, h, lp, reason):
+ 4268  def monitor_handoff(s, h, lp):
+ 4291  def check_trap(s, h, lp):
+ 4321  def clear_handoff(s, note=''):
+ 4341  def trap_sweep():
+ 4367  def mark_sold(s):
+ 4372  def rebuy_blocked(s, t0=''):
+ 4394  def _mode_buckets():
+ 4407  def daily_buy_cap(mode=None):
+ 4416  def daily_sell_cap(mode=None):
+ 4422  def daily_buy_state(mode=None):
+ 4441  def daily_sell_state(mode=None):
+ 4459  def daily_buy_blocked(mode=None):
+ 4474  def daily_buy_left(mode=None):
+ 4485  def daily_sell_left(mode=None):
+ 4494  def daily_buy_done(s, mode=None):
+ 4503  def daily_sell_done(s, mode=None):
+ 4512  def daily_add_state(mode=None):
+ 4533  def daily_add_done(s, mode=None):
+ 4542  def query_order_status(s, ords_snap=None):
+ 4560  def note_order_id(code, rm, oid):
+ 4583  def _oid_sort_key(oid):
+ 4591  def _code_with_suffix(code):
+ 4599  def disp_code(s, name=''):
+ 4616  def disp(s):
+ 4620  def buy_scope_ok(s):
+ 4627  def sell_scope_ok(s):
+ 4631  def is_strategy_target(code):
+ 4660  def scope_refuse(s, side):
+ 4677  def _clock_session_note():
+ 4686  def _today_has_bars(ymd):
+ 4718  def load_local_calendar():
+ 4780  def log_day_phase_banner(force=False):
+ 4821  def refresh_calendar():
+ 5010  def is_trading_day(ymd=''):
+ 5019  def market_phase(ymd='', hm=None):
+ 5035  def load_universe():
+ 5054  def step_day_init():
+ 5170  def detect_volume_unit(d1, sample_cap=300):
+ 5247  def detect_tick_volume_unit(stocks, sample_cap=200):
+ 5284  def _tick_unit_blocked():
+ 5294  def _tick_to_daily_scale():
+ 5302  def load_history():
+ 5432  def blacklist_path():
+ 5437  def load_blacklist():
+ 5485  def st_hist_path():
+ 5490  def load_st_hist():
+ 5537  def get_recent_net_profit(s):
+ 5662  def _float_market_cap_yi(stock):
+ 5732  def _last_close_of(stock):
+ 5743  def get_recent_net_profit_cached(s):
+ 5758  def _ts_to_date(t):
+ 5773  def _fin_short(k):
+ 5779  def _extract_fin_rows(cfd, code, table):
+ 5858  def _pick_latest_fin_row(rows, _report_date, _announce_date, today):
+ 5885  def _download_qmt_financial_data(stocks):
+ 5920  def _probe_financial_data(stocks):
+ 5923  def ensure_financial_data(stocks):
+ 5943  def _mark_loss_degraded():
+ 5959  def risk_blocked(s, comp):
+ 6034  def ma10_held_after_zt(comp, p):
+ 6063  def zt_low_held(comp, p):
+ 6078  def ma5_of_comp(comp):
+ 6087  def detect_confirm_entry(comp, p):
+ 6111  def detect_ma5_break(comp, p, base_vol):
+ 6134  def _norm_code(s):
+ 6138  def _fetch_sector_members():
+ 6174  def _autofix_sector_data():
+ 6182  def load_hot_sectors():
+ 6270  def stock_in_hot_sector(s):
+ 6288  def financial_data_recheck():
+ 6321  def screen_candidates():
+ 6649  def rescreen_if_needed():
+ 6673  def dry_cash_delta(d):
+ 6680  def _own_hold_count():
+ 6688  def query_account():
+ 6764  def _estimate_base_vol(code):
+ 6779  def reconcile_positions():
+ 7188  def day_pos(tick, lp):
+ 7201  def in_high_zone(pos):
+ 7208  def pyramid_alloc(plan_vol):
+ 7236  def pyramid_remain(h):
+ 7247  def _set_buy_ctx(code, ctx):
+ 7274  def pyramid_add(s, h, lp, vol, batch_idx, batch_total, reason, tick=None):
+ 7370  def risk_increase_allowed():
+ 7406  def run_pyramid_adds(ticks, cash, ords_snap=None):
+ 7674  def _norm_reason(r):
+ 7689  def hourly_reason_note(side, code, name, reason):
+ 7720  def _hourly_fmt(d):
+ 7739  def hourly_reason_dump(force=False):
+ 7777  def buy_stock(c, lp, est, ratio, cash, want_vol=None, atr=0.0, atr_pct=0.0, stop_pct=0.0, plan=None, tick=None, ords_snap=None):
+ 7966  def sell_stock(s, h, pos_avail, lp, reason, tick=None):
+ 8005  def place_sell_order(s, h, vol, lp, reason, tick=None, ords_snap=None):
+ 8221  def _own_order(o, s, side):
+ 8238  def _find_order_obj(s, side, ords_snap=None):
+ 8278  def sell_order_obj(s, ords_snap=None):
+ 8290  def cancel_sell_order(o):
+ 8310  def handle_unfilled_sell(s, h, pos_avail, lp, tick=None, ords_snap=None):
+ 8419  def buy_order_obj(s, ords_snap=None):
+ 8428  def cancel_buy_order(s, o):
+ 8449  def handle_unfilled_buy(s, h, ords_snap=None):
+ 8641  def run_round():
+ 8770  def _run_round_unlocked(ticks, pos_total, pos_avail, cash, elap, k, ords_snap=None):
+ 9421  def order_callback(ContextInfo, orderInfo):
+ 9470  def _sim_fill_prob_dynamic(s, price, volume):
+ 9498  def _sim_deal(remark, price, volume):
+ 9595  def _deal_key(dealInfo, code, side, price, volume):
+ 9615  def deal_callback(ContextInfo, dealInfo):
+ 9849  def orderError_callback(ContextInfo, orderArgs, errMsg):
+ 9934  def init(ContextInfo):
+10108  def log_guard(ContextInfo=None):
+10122  def after_init(ContextInfo):
+10130  def handlebar(ContextInfo):
+10145  def timer_poll(ContextInfo):
+10163  def _timer_poll_unlocked(ContextInfo):
+10387  def _sent_wlog(msg):
+10398  def _sent_today():
+10410  def _sent_f(v, dflt=None):
+10423  def _sent_quantile(vals, q):
+10440  def _sent_roll(vals, idx, win, minp):
+10453  def _sent_ewma(vals, span):
+10472  def _sent_col_series(rows, key):
+10477  def _sent_z_last(vals, win):
+10494  def _sent_tanh(x):
+10512  def sent_fingerprint():
+10531  def sent_fetch_all_data():
+10575  def _sent_apply_rows(rows):
+10626  def _sent_degrade_alert(why):
+10646  def _sent_fetch_worker(_lock):
+10665  def _sent_fetch_sync():
+10802  def _winsorize_list(vals):
+10812  def _sent_compute(rows):
+10888  def _sent_fresh_enough(last_date, today):
+10910  def sent_bootstrap():
+10943  def sent_daily_refresh():
+10969  def _sent_reset_ready(why):
+10981  def sent_gate_skip():
+10988  def sent_size_mult():
+10998  def sent_param_overrides():
+11008  def sent_param(name, default):

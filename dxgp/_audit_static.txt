@@ -1,0 +1,84 @@
+=== 1 版本号一致性 ===
+VERSION 常量 = V2.6.149
+SENT_VERSION = 0.1.0
+文件头版本行数 = 3, 首行 = V2.6.149
+首行 == VERSION ? True
+文件头异常版本号: 无
+
+=== 2 死代码扫描 (同一块内 return 之后的兄弟语句) ===
+死代码条数 = 0
+
+=== 3 异常处理 ===
+裸 except: 0 (其中只有 pass: 0)
+except Exception: 351
+
+=== 4 铁律检查 ===
+  stop_order         出现 14 次
+  stop_loss_order    出现 0 次
+  algo_order         出现 0 次
+  order_target       出现 0 次
+  NEVER_STOP_LOSS 赋值: ['True']
+
+=== 5 下单调用 (passorder 实际调用点) ===
+  L8761   opType=23  _api(passorder, 23, 1101, G.accid, s, 11, px, vol,
+  L9449   opType=23  _api(passorder, 23, 1101, G.accid, s, 11, px, vol,
+  L9710   opType=24  _api(passorder, 24, 1101, G.accid, s, 11, px, vol,
+  L10189  opType=23  _api(passorder, 23, 1101, G.accid, s, 11, px, int(pend),
+
+=== 6 资金/持仓上限守卫 ===
+  used_capital()       出现 5 次
+  abs_cap_left(        出现 4 次
+  can_open_new(        出现 4 次
+  pos_limit()          出现 5 次
+
+=== 7 情绪模块关键函数存在性 ===
+  _sent_fetch_from_cache     有
+  _sent_acc_load             有
+  _sent_acc_dump             有
+  _sent_apply_rows           有
+  _sent_use_last_good        有
+  _sent_compute              有
+  _sent_fetch_sync           有
+  sent_daily_refresh         有
+  _sent_reset_ready          有
+  sent_gate_skip             有
+  sent_size_mult             有
+  sent_param                 有
+
+=== 8 排雷/ST/黑名单 ===
+  risk_excluded          有
+  _load_risk_exclude     缺失
+  load_st_hist           有
+  is_st_name             有
+  excluded               有
+  load_blacklist         有
+  _load_blacklist        缺失
+
+=== 9 参数指纹 ===
+  _FP_DENY 键数 = 21
+  VERSION 在 DENY 内: True
+  HISTORY_BARS 在 DENY 内: False
+
+=== 10 未来函数排查 (r[date] < today 之类守卫计数) ===
+  date'] < _t              1 处
+  _today and isinstance    2 处
+  >= _today                2 处
+  >= today                 1 处
+
+=== 11 超长函数 (>250 行) ===
+  L1952   _refresh_ticks               282 行
+  L7597   screen_candidates            426 行
+  L8189   reconcile_positions          408 行
+  L8829   run_pyramid_adds             328 行
+  L10334  _run_round_unlocked          649 行
+  L13285  _sent_fetch_sync             976 行
+
+=== 12 环境合规 (QMT 内置 Python) ===
+  xtquant            13 次
+  xtdata             16 次
+  import requests    0 次
+  import numpy       0 次
+  import pandas      0 次
+  import urllib      3 次
+  pip                0 次
+  subprocess         0 次

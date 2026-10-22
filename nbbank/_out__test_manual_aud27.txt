@@ -1,0 +1,65 @@
+==============================================================================
+AUD27 专项回归：手工仓分离 + 卖出铁律
+==============================================================================
+
+【1】_sync_state_to_actual 手工仓分离（源码断言）
+  [PASS] 不再把券商持仓写进 state['total_cost']                        got=True
+  [PASS] 不再把券商持仓写进 state['deployed']                          got=True
+  [PASS] 不再把券商均价写成 last_add_price 基准                          got=True
+  [PASS] 写入 manual_shares（AUD35-P1 扣除策略账本与在途买单口径）             got=True
+  [PASS] 写入 manual_cost                                       got=True
+  [PASS] deployed 只反映策略账本                                     got=True
+  [PASS] tier 只在策略有仓时保留                                       got=True
+
+【2】_r1_net_profit_gate 铁律：亏损不卖 / 扣费后赚钱才卖
+  [PASS] 成本价卖出被拒(扣费后亏)                                        got=False
+  [PASS] 拒卖原因含「不赚钱不卖」                                         got=True
+  [PASS] 扣费后盈亏为负                                              got=True
+  [PASS] 微涨0.2%仍被拒(未覆盖税费)                                     got=False
+  [PASS] 涨5%扣费后净赚放行                                           got=True
+  [PASS] 放行原因含净赚金额                                            got=True
+  [PASS] 保守成交价 < 现价(卖出滑点)                                     got=True
+  [PASS] 临界价-0.01元 -> 净到手<成本 -> 拒卖                            got=False
+  [PASS] 拒卖且净到手<=成本                                           got=True
+  [PASS] 临界价+2%放行                                             got=True
+  [PASS] 券商0股直接拒卖                                             got=False
+  [PASS] 成本取max(券商,手工账本)时按40判 -> 拒卖                           got=False
+  [PASS] 判定用成本=40000                                          got=40000.0
+  [PASS] 子仓卖出用1000股算成本                                        got=34830.0
+
+【3】manual_sell 路径完整性（源码断言）
+  [PASS] manual_sell 已定义                                      got=True
+  [PASS] handlebar 调用 manual_sell                             got=True
+  [PASS] 手工仓卖单在途冻结字段                                          got=True
+  [PASS] manual_hold_watch 观察日志                               got=True
+  [PASS] 清仓时手工账本归零                                            got=True
+  [PASS] Sell 路径不再依赖 position_shares 判 R1                     got=True
+  [PASS] manual_sell 内先过铁律闸门                                  got=True
+  [PASS] manual_sell 不写 tier                                  got=True
+  [PASS] manual_sell 不写 deployed                              got=True
+  [PASS] 两本账并存时让位策略止盈                                         got=True
+  [PASS] 无止损语义（不含 stop_loss 调用）                               got=True
+
+【4】SYMBOLS 配置
+  [PASS] 002142.SZ manual_takeover(AUD33 用户拍板恢复正常交易)          got=False
+  [PASS] manual_* 参数保留可复用                                     got=0.04
+  [PASS] 手工仓止盈阈值                                              got=0.04
+  [PASS] 移动止盈开关                                               got=True
+  [PASS] 移动止盈激活线                                              got=0.03
+  [PASS] 移动止盈回撤                                               got=0.02
+
+【5】new_state 手工仓字段
+  [PASS] manual_shares 默认0                                    got=0
+  [PASS] manual_cost 默认0                                      got=0.0
+  [PASS] manual_peak_cost 默认0                                 got=0.0
+  [PASS] manual_sell_pending_until 默认0                        got=0.0
+  [PASS] position_shares 仍为0(策略账本独立)                          got=0
+  [PASS] tier 仍为-1(未被手工仓推进)                                   got=-1
+  [PASS] deployed 仍为0(不占额度)                                   got=0.0
+
+【6】版本自检
+  [FAIL] STRATEGY_VERSION                                     got='v1.2.79' want='v1.2.78'
+  [PASS] 文件头版本行同步                                             got=True
+
+==============================================================================
+失败 1 项 / 通过 46 项：['STRATEGY_VERSION']

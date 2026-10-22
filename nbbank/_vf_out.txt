@@ -1,0 +1,156 @@
+字节数 514194 | 字符数 417437 | 行数 9445
+
+==========================================================================
+v1.2.78 最终验收
+==========================================================================
+  [PASS] GBK 解码正常                           
+  [PASS] 行尾纯 LF（无 CRLF）                     
+  [PASS] 首行 coding:gbk 声明保留                 
+  [PASS] AST 解析通过                           
+  [PASS] compile 通过                         
+  [PASS] 未定义名 = 0                           
+  [PASS] 未定义名 = 0（闭包感知版）                    
+  [PASS] P1 资金闸门 fail-closed 拦截落地           
+  [PASS] P1 查询失败 return False 拦截            
+  [PASS] P1 原 except:pass 已移除               
+  [PASS] P2 M3 兜底含 free 校验                  
+  [PASS] P2 M3 冗余重复条件已消除                    
+  [PASS] P3 peak 写入用保守价                     
+  [PASS] P3 回撤计算用保守价                        
+  [PASS] P3 不再以实时价更新 peak                   
+  [PASS] P4 额度日志如实化（AUD27：手工仓不计占用）          
+  [PASS] P4 SYMBOLS 注释校正（AUD83-P4 条目已按 AUD27 作废） 
+  [PASS] P5 v1.2.46A/46B/46C 拆分             
+  [PASS] P5 v1.2.37 撞号拆分                    
+  [PASS] P5 AUD80 撞号改 AUD85                 
+  [PASS] P6 文件头乱码清零                         
+  [PASS] P7 三变量注释如实化                        
+  [PASS] v1.2.61 记录块已写入文件头                  
+  [PASS] v1.2.60 记录块已写入文件头                  
+  [PASS] v1.2.59 记录块保留                      
+  [PASS] v1.2.58 记录块保留                      
+  [PASS] AUD91-P1A can_invest 缓冲已改 600      
+  [PASS] AUD91-P1C free 递减改含费成本             
+  [PASS] AUD91-P1C deployed 同期口径未破          
+  [PASS] AUD91-P1E 参与率注释已补齐缩进               
+  [PASS] AUD23-P1a 情绪数据不足在狂热单态下 fail-open   
+  [PASS] AUD23-P1b 子指标全失效在狂热单态下 fail-open   
+  [PASS] AUD23-P2 情绪取数走多形态降级+合理性护栏          
+  [PASS] AUD23-P3 名称未知按最小幅度 ±5% 估算          
+  [PASS] AUD23-P4 盘中阶梯加仓跳档补日志               
+  [PASS] AUD23-P5 四个 _closed_* 助手口径未知不剔末根   
+  [PASS] AUD24-P1a _inject_dl_funcs 已定义且三路兜底 
+  [PASS] AUD24-P1b init/handlebar/补下载三处调用注入 
+  [PASS] AUD24-P1c 空壳不再直接调用（if not callable(fn): continue） 
+  [PASS] AUD24-P1d 告警路径有异常保护（不影响主流程）        
+  [PASS] AUD24-P2 调用方传真实需求根数（不再 ma_long+5）  
+  [PASS] AUD24-P2b 请求 n+10 根、最少收 n+1 根      
+  [PASS] AUD24-P3 指数不复权优先（前复权仅兜底）           
+  [PASS] AUD24-P4a _idx_last_bar_date 已定义并按自然日缓存 
+  [PASS] AUD24-P4b 末根日期确认为当日才剔              
+  [PASS] AUD24-P5a 老接口 require_code 参数已加    
+  [PASS] AUD24-P5b _get_hist 与指数调用均启用严格模式   
+  [PASS] AUD24-P6 首尾 0 值清洗（不再整段作废）          
+  [PASS] AUD24-P7 need 最低长度闸（短序列继续降级）       
+  [PASS] AUD24-P7b 全不足时回传最长合理候选（准确报实得根数）    
+  [PASS] v1.2.62 记录块已写入文件头                  
+  [PASS] AUD25-P1a _sentiment_mode_desc 已定义 
+  [PASS] AUD25-P1b 单态语义如实描述（只拦狂热/恐慌放行/不缩放）  
+  [PASS] AUD25-P1c 情绪自检改打印生效策略（不再直接列原始开关）   
+  [PASS] AUD25-P1d 完整模式仍逐项打印四项原值            
+  [PASS] AUD25-P2a _dl_inject_report 已定义    
+  [PASS] AUD25-P2b init 注入后打印补下载自检          
+  [PASS] AUD25-P2c 三路全落空时给出明确处置提示           
+  [PASS] v1.2.63 记录块已写入文件头                  
+  [PASS] AUD26-P1a 个股数据门请求 ma_long+10、判定只需 ma_long 
+  [PASS] AUD26-P1b 个股门文案与指数门统一（不足%d根(实得%d)） 
+  [PASS] AUD26-P1c fetch_hist_fields need 改为 ma_long 
+  [PASS] AUD26-P1d 无 ma_long+5 残留           
+  [PASS] AUD26-P1e 最终判定按已收盘有效根数             
+  [PASS] v1.2.64 记录块已写入文件头                  
+  [PASS] AUD27-P1a+AUD35-P1 手工份额=券商全量-策略账本-在途买单 
+  [PASS] AUD27-P1b 策略账本不再被外部持仓污染（源码级）       
+  [PASS] AUD27-P1c deployed 只跟策略账本 total_cost 
+  [PASS] AUD27-P1d tier 空仓时恒 -1（不被外部持仓推进）   
+  [PASS] AUD27-P1e last_add_price 不回填券商均价   
+  [PASS] AUD27-P1f 手工仓分离日志如实告知不占额度          
+  [PASS] AUD27-P1g 外部变动日志按两本账分别打印           
+  [PASS] AUD27-P1h 清仓时手工账本一并归零              
+  [PASS] AUD27-P1i new_state 含手工账本四字段       
+  [PASS] AUD27-P2a _r1_net_profit_gate 已定义且签名含 sub_vol 
+  [PASS] AUD27-P2b 成本价取三本账最大值（宁可少卖不可亏卖）     
+  [PASS] AUD27-P2c 净到手 <= 成本 一律拒卖           
+  [PASS] AUD27-P2d 三费口径：佣金万0.841(5元起)+印花万5+过户万1 
+  [PASS] AUD27-P2e 保守成交价与 sell_all 挂单价同口径   
+  [PASS] AUD27-P2f 闸门异常 fail-closed（拿不准就拒卖） 
+  [PASS] AUD27-P2g 闸门实现体不含任何止损语义            
+  [PASS] AUD27-P2h sell_all 的 R1 段改为调用统一闸门  
+  [PASS] AUD27-P2i sell_all 独立查券商均价（第4返回值是原因文本） 
+  [PASS] AUD27-P2j R1 不再依赖 position_shares>0 才生效 
+  [PASS] AUD27-P3a manual_sell 已定义且受 manual_takeover 开关约束 
+  [PASS] AUD27-P3b 不写策略账本（tier/deployed/first_batch 均未赋值） 
+  [PASS] AUD27-P3c 两本账并存时让位策略止盈链            
+  [PASS] AUD27-P3d 卖单在途冻结防重复挂单              
+  [PASS] AUD27-P3e 跌停禁卖（与策略侧同口径）            
+  [PASS] AUD27-P3f 阈值判定前必过铁律闸门              
+  [PASS] AUD27-P3g 固定止盈仍需扣费后净赚 >= 阈值        
+  [PASS] AUD27-P3g2 移动止盈改两段式市价口径（AUD29-P1 修正） 
+  [PASS] AUD27-P3h 卖出成功后清手工账本并置在途冻结         
+  [PASS] AUD27-P3i 手工仓路径不触任何买入函数            
+  [PASS] AUD27-P3j handlebar 手工仓分支改为先跑 manual_sell 再 continue 
+  [PASS] AUD27-P3k 手工仓分支仍在下单前跑 bar 重放拦截     
+  [PASS] AUD27-P4a manual_hold_watch 已定义（纯日志） 
+  [PASS] AUD30-P2 观察日志独立节流 60s（原实现每 bar 刷屏） 
+  [PASS] AUD27-P4b 观察日志含反解止盈触发价             
+  [PASS] AUD27-P5a SYMBOLS 手工接管配置齐全         
+  [PASS] AUD27-P5b _manual_cfg 缺键时按默认值兜底    
+  [PASS] AUD27-P5c init 自检声明手工仓不占名额与额度      
+  [PASS] AUD27-P5d init 自检声明亏损一律不卖          
+  [PASS] v1.2.65 记录块已写入文件头                  
+  [PASS] 硬止损关闭 (hard_stop_dd_pct=None)      
+  [PASS] sell_all R1 不赚钱不卖复核存在              
+  [PASS] sell_all 缺 state 时拒绝卖出             
+  [PASS] 全部 sell_all 调用均传 state             
+  [PASS] 移动止盈 pnl_pct>=0 红线保留               
+  [PASS] R1 净到手<=成本 拦截（AUD27 起由统一闸门承载）      
+  [PASS] 无止损单/强制平仓字样                        
+  [PASS] 止损仅告警不卖出                           
+  [FAIL] 版本号三处对齐                            头=v1.2.78 常量=v1.2.79 构建=2026-10-22
+  [FAIL] 当前版本必有对应变更记录块（防版本历史漂移）             当前版本=v1.2.79
+  [PASS] 版本记录无重复号                           
+  [PASS] 审计号无重复                             
+  [PASS] 未引用函数仅 QMT 三入口                     
+  [PASS] 无重复函数定义                            
+  [PASS] 无裸 except                          
+  [PASS] AUD92-P1 截断写防护改三通道读取（读不出来不否决）      
+  [PASS] AUD92-P1 真·半截 JSON 仍拦截并告警          
+  [PASS] AUD92-P2 落盘结果登记字典存在且成功时登记 ok       
+  [PASS] AUD92-P2 save_state 见 skip 如实报失败进持久化降级 
+  [PASS] AUD92-P3 情绪日志显示生效缩放（狂热单态标注不缩放）     
+  [PASS] AUD93-P1 统一佣金函数 order_commission 定义（每单 5 元底·支持多单） 
+  [PASS] AUD93-P1 内联 max(金额x费率,5元) 已全部收口（无残留） 
+  [PASS] AUD93-P1 九处费用点统一走 order_commission 
+  [PASS] AUD93-P1 compute_buy_cost 佣金走统一函数  
+  [PASS] AUD93-P1 下单前按含费成本预留 shrink_for_fee（四处生效） 
+  [PASS] AUD93-P2 手工仓需现价反推含 5 元底（迭代收敛）      
+  [PASS] AUD94-P1 策略权益市值只算策略自己的股（扣手工份额）     
+  [PASS] AUD94-P1 不再用券商全量 actual_vol 直接计市值  
+  [PASS] AUD94-P2 加仓链入口按策略账本持仓判定            
+  [PASS] AUD94-P3 在途买单期间手工份额只增不减            
+  [PASS] AUD94-P4 R1 闸门支持 exact_avg 按指定账本成本判 
+  [PASS] AUD94-P4 sell_all 按本次卖的那本账取成本      
+  [PASS] AUD94-P5 买入额度闸门只算策略持仓市值            
+  [PASS] AUD94-P6 锁续命回读校验 pid（易主即降级只观察）     
+  [PASS] AUD94-P7 情绪 EWMA 每交易日只平滑一次         
+  [PASS] AUD94-P8 cash 注释如实标注（不再说「不参与风控计算」） 
+  [PASS] AUD94-P9 释放锁前校验归属（不删他人锁）           
+  [PASS] AUD94 铁律零触碰：硬止损仍为 None             
+  [PASS] v1.2.78 版本记录块在文件头                  
+  [PASS] AUD95-P1 运行模式探测加入 init 起始时刻下界（防上一轮残留误报） 
+  [PASS] AUD95-P1 init 首行写入起始时刻             
+  [PASS] v1.2.77 版本记录块在文件头                  
+  [PASS] v1.2.77 情绪自检字段名改为「配置模式」（区分配置原值与生效语义） 
+  [PASS] v1.2.76 版本记录块在文件头                  
+==========================================================================
+通过 146 / 148
+==========================================================================

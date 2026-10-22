@@ -1,0 +1,115 @@
+
+===== def fee_buy (L2572..L2595) =====
+L2572: def fee_buy(amount, code='', order_id='', n_order=1):
+L2573:     """买入费用(V2.6.69): 按品种取费率 —— 佣金(不足最低按最低) + 过户费(仅沪市股票双边)。
+L2574:     品种由 _prod_of(code) 显式品种键识别: 股票/ETF/港股通/可转债/逆回购各按 FEE_PROFILE 报价。
+L2575:     本策略只交易沪深A股, 行为与旧版完全一致(万0.841, 5元起收)。
+L2576: 
+L2577:     V2.6.156: order_id 给定时按该委托单归并(见 _order_fee_delta), 同一张委托的多笔成交只收一次起收;
+L2578:     n_order>1 表示「该仓共 n 张委托单」, 用于存量持仓校准, 按 max(金额x费率, 最低佣金x n) 估算。
+L2579:     两参数默认不启用, 其余调用点行为与旧版逐字一致。"""
+L2580:     if not FEE_ON or amount <= 0:
+L2581:         return 0.0
+L2582:     if order_id:
+L2583:         return _order_fee_delta(order_id, amount, lambda a: fee_buy(a, code))
+L2584:     _p = fee_profile(code)
+L2585:     # 股票档过户费仍走 _transfer_rate_for(仅沪市收), 与旧版一致; 其它品种直接用配置表
+L2586:     _tr = _transfer_rate_for(code) if _prod_of(code) == 'stock' else _p['transfer']
+L2587:     return _round2(max(amount * _p['rate'], _p['min'] * max(1, int(_f(n_order)))) + amount * _tr)
+L2588: 
+L2589: def fee_sell(amount, code='', order_id='', n_order=1):
+L2590:     """卖出费用(V2.6.69): 按品种取费率 —— 佣金(不足最低按最低) + 印花税(仅股票卖出单边)
+L2591:     + 过户费(仅沪市股票双边)。可转债卖出费率用 FEE_CBOND_SELL_RATE(买卖不同价)。
+L2592:     本策略只交易沪深A股, 行为与旧版完全一致。
+L2593: 
+L2594:     V2.6.156: order_id / n_order 语义同 fee_buy —— 按委托单归并, 起收只算一次。"""
+L2595:     if not FEE_ON or amount <= 0:
+
+===== def fee_sell (L2589..L2612) =====
+L2589: def fee_sell(amount, code='', order_id='', n_order=1):
+L2590:     """卖出费用(V2.6.69): 按品种取费率 —— 佣金(不足最低按最低) + 印花税(仅股票卖出单边)
+L2591:     + 过户费(仅沪市股票双边)。可转债卖出费率用 FEE_CBOND_SELL_RATE(买卖不同价)。
+L2592:     本策略只交易沪深A股, 行为与旧版完全一致。
+L2593: 
+L2594:     V2.6.156: order_id / n_order 语义同 fee_buy —— 按委托单归并, 起收只算一次。"""
+L2595:     if not FEE_ON or amount <= 0:
+L2596:         return 0.0
+L2597:     if order_id:
+L2598:         return _order_fee_delta(order_id, amount, lambda a: fee_sell(a, code))
+L2599:     _p = fee_profile(code)
+L2600:     _r = _p['rate']
+L2601:     if _prod_of(code) == 'cbond':
+L2602:         _r = FEE_CBOND_SELL_RATE
+L2603:     _tr = _transfer_rate_for(code) if _prod_of(code) == 'stock' else _p['transfer']
+L2604:     return _round2(max(amount * _r, _p['min'] * max(1, int(_f(n_order)))) + amount * _p['stamp'] + amount * _tr)
+L2605: 
+L2606: def pos_vol(h):
+L2607:     """持仓股数: 实盘以成交回报累计(fill_vol)为准, 模拟用委托量;
+L2608:     重审20261005(P2-4): h为None/非dict时返回0(健壮性, 不让工具函数崩溃扩散到调用方)"""
+L2609:     if not isinstance(h, dict):
+L2610:         return 0
+L2611:     v = int(_f(h.get('fill_vol', 0)))
+L2612:     return v if v > 0 else int(_f(h.get('buy_vol', 0)))
+
+===== order_cnt 赋值上下文 (L11315..L11375) =====
+L11315:                 return
+L11316:             if _dk:
+L11317:                 _seen[_dk] = time.time()
+L11318:             # P3-1拍板(2026-10-08): 去重表上限 2000 -> 5000(成交回报留存能力扩大),
+L11319:             # 每次仍只清理最旧 500 条, 防长跑积累被截断后旧成交重复入账
+L11320:             if len(_seen) > 5000:
+L11321:                 for _old in sorted(_seen, key=lambda x: _seen[x])[:500]:
+L11322:                     _seen.pop(_old, None)
+L11323:         # V2.6.156: 取委托单号 —— 费用按委托单只归并一次, 同单多笔成交不重复起收
+L11324:         _order_id = str(getattr(dealInfo, 'm_strOrderID', '')
+L11325:                         or getattr(dealInfo, 'm_strOrderSysID', '') or '')
+L11326:         if side == 'BUY':
+L11327:             h = G.state['hold'].get(code)
+L11328:             if h is None:
+L11329:                 # P1-3: 持仓记录已被"误判未成交"清理, 但委托实际成交了 —— 补录建仓接管管理
+L11330:                 bctx = (G.state.get('buy_ctx') or {}).get(code) or {}
+L11331:                 _bv, _bv_est = int(bctx.get('base_vol', 0) or 0), False
+L11332:                 if _bv <= 0:            # 重审20261005(1-6): base_vol兜底估算, 防补录仓永无自动卖出出口
+L11333:                     _bv, _bv_est = _estimate_base_vol(code)
+L11334:                 h = {'t0': bctx.get('t0', ''), 'base_vol': _bv,
+L11335:                      'zt_close': _f(bctx.get('zt_close', 0.0)), 'name': bctx.get('name', ''),
+L11336:                      'buy_date': G.today or datetime.datetime.now().strftime('%Y%m%d'),
+L11337:                      'buy_price': price, 'buy_vol': volume, 'paper': DRY_RUN,
+L11338:                      'fill_sum': 0.0, 'fill_vol': 0, 'exited': False,
+L11339:                      'fee': 0.0, 'cost_total': 0.0, 'last_px': price,
+L11340:                      'open_ts': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+L11341:                      'alert_win': 0, 'alert_loss': 0, 'order_ts': 0.0, 'order_retries': 0,
+L11342:                      'cancel_sent': False, 'recovered': True}
+L11343:                 G.state['hold'][code] = h
+L11344:                 log('[实盘] 买入成交补录 | %s | 持仓记录曾被误判未成交清理, 已按成交回报重建接管 | %d股 @%.2f%s'
+L11345:                     % (disp_code(code, h.get('name', '')), volume, price,
+L11346:                        ('; 基准量ctx缺失, 已按最近完成日量估算=%d' % _bv) if _bv_est else ''))
+L11347:             amt = _round2(price * volume)
+L11348:             # V2.6.156: 先判该委托单是否已建账(算费会写账, 必须先判), 再按委托单归并算费
+L11349:             _ordk = ('%s|%s' % (G.today or '', _order_id)) if _order_id else ''
+L11350:             _new_ord = bool(_ordk) and (not (G.state.get('order_fee_acc') or {}).get(_ordk))
+L11351:             fee = fee_buy(amt, code, order_id=_order_id)
+L11352:             if _new_ord:      # 该仓累计委托单张数, 供启动校准按张数估算起收
+L11353:                 h['order_cnt'] = int(_f(h.get('order_cnt', 0)) or 0) + 1
+L11354:             was_new = int(_f(h.get('fill_vol', 0) or 0)) <= 0   # 本笔是否该股首笔成交(分批第2/3批不是新开仓)
+L11355:             h['fill_sum'] += price * volume
+L11356:             h['fill_vol'] += volume
+L11357:             h['buy_vol'] = int(h['fill_vol'])      # 分批建仓: buy_vol同步为实际累计成交股数
+L11358:             h['pend_vol'] = max(0, int(_f(h.get('pend_vol', 0))) - volume)   # 在途量核销
+L11359:             if h['fill_vol'] > 0:
+L11360:                 h['buy_price'] = h['fill_sum'] / h['fill_vol']
+L11361:             h['fee'] = _round2(_f(h.get('fee', 0.0)) + fee)
+L11362:             # 成本按累计成交金额+累计费用重算(避免buy_stock预设估算值与成交回报叠加导致成本翻倍)
+L11363:             h['cost_total'] = _round2(h['fill_sum'] + h['fee'])
+L11364:             h['last_px'] = price
+L11365:             log('[实盘] 买入成交回报 | %s | %d股 @%.2f | 本笔金额=%.2f元 本笔费用=%.2f元(已按委托单归并) | 持仓均价=%.2f | 备注=%s'
+L11366:                 % (disp_code(code, h.get('name', '')), volume, price, amt, fee, h['buy_price'], rm))
+L11367:             npos_before = max(0, mode_pos_count() - (1 if was_new else 0))   # 仅首笔成交才算新开仓(回退1只)
+L11368:             # V2.6.39b: 传入 was_new 与加仓前股数, 修正账本"该股A->B股/组合只数"显示
+L11369:             pos_before = 0 if was_new else int(_f(h.get('fill_vol', 0) or 0) or 0) - int(volume)
+L11370:             alert_open(ledger_buy(code, h, price, volume,
+L11371:                                   '实盘买入成交回报(备注%s)' % rm, npos_before,
+L11372:                                   was_new=was_new, pos_before=pos_before, fee=fee))
+L11373:             # V2.6.43b: 最终批全部成交后才输出“建仓成交完成”，股数/均价取成交回报后的真实累计值
+L11374:             if (int(_f(h.get('pend_vol', 0)) or 0) <= 0
+L11375:                     and pos_vol(h) >= int(_f(h.get('plan_vol', 0)) or 0) > 0):

@@ -1,0 +1,1435 @@
+# -*- coding: utf-8 -*-
+"""P1-3 收尾不变量校验"""
+import io, re, hashlib
+
+PATH = r"E:\桌面\666666\dxgp\zt_shrink_strategy_gbk.py"
+with io.open(PATH, "r", encoding="gbk", newline="") as f:
+    text = f.read()
+lines = text.split("\r\n")
+ok = []
+def chk(name, cond, extra=""):
+    ok.append((name, bool(cond)))
+    print("%s %s %s" % ("PASS" if cond else "FAIL", name, extra))
+
+# 1 编码/行尾
+chk("GBK解码无损", True)
+chk("无裸LF", "\n" not in text.replace("\r\n", ""))
+chk("CRLF行尾", "\r\n" in text)
+chk("行数=13919", len(lines) == 13919, "actual=%d (含末尾空段)" % len(lines))
+
+# 2 编译
+try:
+    compile(text, PATH, "exec")
+    chk("compile OK", True)
+except SyntaxError as e:
+    chk("compile OK", False, str(e))
+
+# 3 铁律与费率(值未动)
+chk("NEVER_STOP_LOSS=True", "NEVER_STOP_LOSS = True" in text or "NEVER_STOP_LOSS=True" in text)
+chk("股票佣金万0.841", "0.0000841" in text)
+chk("股票5元起", "5.0" in text or "5元" in text)
+chk("ETF万0.5", "0.00005" in text)
+chk("港股通万1", "0.0001" in text)
+chk("可转债买十万分之4.4", "0.000044" in text)
+chk("可转债卖5", "0.00005" in text)
+chk("移交释放双额度文案(used_capital)", "移交后释放股票数额度与资金额度" in text)
+chk("移交释放双额度文案(版本史)", "移交人工后释放股票数与资金额度逻辑均保持不变" in text)
+chk("持仓名额排除handoff(L2441)", "if is_own_position(h) and not h.get('exited') and not is_handoff(h)]) + extra" in text)
+chk("used_capital排除handoff(L2492)", "if is_handoff(_h):" in text)
+chk("calc_size排除handoff(L3903)", "and not is_handoff(h)" in text)
+# xtquant: 只允许出现在注释/文档串(描述已删除), 代码行零残留
+in_doc = False
+code_lines = []
+for ln in lines:
+    s = ln.strip()
+    if in_doc:
+        code_lines.append(False)
+    elif s.startswith("#"):
+        code_lines.append(False)
+    else:
+        code_lines.append(True)
+    if ln.count('"""') % 2 == 1:
+        in_doc = not in_doc
+bad_xt = [i + 1 for i, l in enumerate(lines) if "xtquant" in l and code_lines[i]]
+chk("xtquant代码零残留", not bad_xt, str(bad_xt))
+
+# 4 互斥锁
+chk("_API_LOCK定义", "_API_LOCK = threading.RLock()" in text)
+chk("_api helper定义", "def _api(fn, *a, **kw):" in text)
+chk("_api出现51次", text.count("_api(") == 51, "actual=%d" % text.count("_api("))
+# _api 定义必须先于所有调用
+i_def = text.find("def _api(fn, *a, **kw):")
+first_call = text.find("_api(", i_def)
+chk("_api定义在首个调用前", 0 < i_def < first_call)
+
+# 5 情绪worker 4站点带锁(注释行不算)
+w = [i for i, l in enumerate(lines) if "_api(C.get_stock_list_in_sector" in l]
+chk("worker get_stock_list_in_sector x2带锁", len(w) == 2, str([x + 1 for x in w]))
+w2 = [i for i, l in enumerate(lines) if "_api(C.get_market_data_ex" in l]
+chk("worker get_market_data_ex x2带锁", len(w2) == 2, str([x + 1 for x in w2]))
+chk("V2.6.104 取数侧不再重复下载日线(改等下载阶段结束)",
+    "_api(download_history_data, _s, '1d', _start, _end)" not in text
+    and "_dl_wait_beg" in text)
+
+# 6 版本头(V2.6.87 已升版: 取数层覆盖率/沿用信号/心跳/入参保护)
+m = re.search(r"VERSION\s*=\s*'([^']+)'", text)
+_vt = tuple(int(x) for x in (m.group(1).lstrip("V").split(".") if m else ["0", "0", "0"]))
+chk("VERSION>=V2.6.99", _vt >= (2, 6, 99), m.group(1) if m else "?")
+chk("文件头V2.6.87记录", "版本号: V2.6.87" in text)
+chk("文件头V2.6.86历史行保留", "版本号: V2.6.86" in text)
+chk("文件头V2.6.85历史行保留", "版本号: V2.6.85" in text)
+chk("文件头V2.6.84历史行保留", "版本号: V2.6.84" in text)
+chk("文件头V2.6.83历史行保留", "版本号: V2.6.83" in text)
+chk("文件头V2.6.82历史行保留", "版本号: V2.6.82" in text)
+
+# 6a V2.6.84 排雷日志口径
+chk("RX日志 空清单独立分支", "elif _found:" in text)
+chk("RX日志 区分文件缺失与清单为空", "_found = True" in text and "_found = False" in text)
+chk("RX日志 每日一次去重", text.count("G.risk_ex_note_date") >= 3,
+    "actual=%d" % text.count("G.risk_ex_note_date"))
+_body = "\r\n".join(l for l in lines if not l.startswith("版本号: "))
+# V2.6.120: 断言"旧写法已删除"时必须剔除注释行 —— 否则自己写的说明注释
+#   (如"原版只做 _dt_asm = max(0.0, _dt_asm + _dt_rest)")会让断言假失败。
+_code_only = "\r\n".join(l for l in lines
+                          if l.strip() and not l.strip().startswith("#"))
+chk("RX日志 不再出现'可选功能'误导", not any("可选功能" in l for l in lines if "log(" in l))
+chk("RX日志 写明无需重启", "无需重启策略" in text)
+
+# 6c V2.6.85 情绪锁日时机 + 双指纹 + 覆写释义
+_w = [i for i, l in enumerate(lines) if l.strip() == "SENT_STATE['last_fetch_date'] = _t"]
+chk("V2.6.85 锁日写入点唯一", len(_w) == 1, str([x + 1 for x in _w]))
+_sig_none = [i for i, l in enumerate(lines) if l.strip() == "if sig is None:"]
+chk("V2.6.85 锁日位于'信号算出'之后",
+    len(_w) == 1 and len(_sig_none) == 1 and _w[0] > _sig_none[0],
+    "锁日L%s vs sigNoneL%s" % ([x + 1 for x in _w], [x + 1 for x in _sig_none]))
+chk("V2.6.85 VERSION 已排除出参数指纹", "'VERSION'," in text)
+chk("V2.6.85 双指纹函数齐备",
+    "def _fp_calc(keys):" in text and "def param_fingerprint():" in text
+    and "def code_fingerprint():" in text)
+chk("V2.6.85 版本指纹独立输出", "[版本指纹]" in text)
+chk("V2.6.85 参数指纹不再自述含VERSION",
+    "VERSION 仍纳入(版本变更=指纹变更" not in text)
+chk("V2.6.85 覆写释义函数", "def _sent_override_note(ovs):" in text)
+chk("V2.6.85 覆写释义日志", "参数覆写(%s档)已生效" in text)
+chk("V2.6.85 释义含方向说明", "越低越严" in text and "越长越晚" in text)
+chk("V2.6.85 覆写释义在信号刷新之后",
+    text.index("_sent_override_note(sig['overrides'])") > text.index("_sent_wlog('信号刷新"))
+
+# 6b P2首批(P2-9/P2-8/P2-12/P2-6)不变量
+chk("P2-9 三处return带0<=下界", text.count("return 0 <= (now - ts) <= float(tolerance_sec)") == 3,
+    "actual=%d" % text.count("return 0 <= (now - ts) <= float(tolerance_sec)"))
+chk("P2-9 无残留裸return(now-ts)", text.count("return (now - ts) <=") == 0)
+chk("P2-8 epoch分支", "elif _sk.isdigit() and len(_sk) >= 9:" in text)
+chk("P2-8 epoch换算", "datetime.datetime.fromtimestamp(_ts).strftime('%Y%m%d')" in text)
+chk("P2-8 毫秒折算", "if _ts > 1e12:" in text)
+chk("P2-8 浮点尾巴剥离", "_sk.endswith('.0') and _sk[:-2].isdigit()" in text)
+chk("P2-8 out赋值保留", text.count("out[_dk] = v") >= 1 and "out[str(k)[:8]] = v" in text)
+chk("P2-12 当日K线过滤(V2.6.83改用_bardate_loose)",
+    "bars = {_k: _v for _k, _v in bars.items() if _bardate_loose(_k) != G.today}" in text)
+chk("P2-6 regime阈值=-1.0", bool(re.search(r"^SENT_REGIME_PANIC_LO\s*=\s*-1\.0", text, re.M)))
+chk("P2-6 gate阈值未动(-1.5)", "'gate_panic_th': -1.5" in text)
+
+# 6c P2第二批(P2-1/P2-4/P2-5/P2-13)不变量
+chk("P2-1 used_capital哨兵", "return 1e18" in text and "repr(_e)[:150])" in text)
+chk("P2-1 used_capital无fail-open", "    except Exception:\n        return 0.0\n    return inv" not in text)
+chk("P2-13a _keep_partial_hold助手", "def _keep_partial_hold(s):" in text)
+chk("P2-13a buy_abandoned标志", "_h['buy_abandoned'] = True" in text)
+chk("P2-13b 顶部早返回", "if h.get('buy_abandoned'):" in text)
+chk("P2-13c 两处del已消除(剩对账路径1处代码)",
+    sum(1 for l in lines if l.strip().startswith("del G.state['hold'][s]")) == 1,
+    "actual=%d" % sum(1 for l in lines if l.strip().startswith("del G.state['hold'][s]")))
+chk("P2-13c 裸调用6处(buy_stock原有)", sum(1 for l in lines if l.strip() == "_safe_rollback_placeholder(s)") == 6,
+    "actual=%d" % sum(1 for l in lines if l.strip() == "_safe_rollback_placeholder(s)"))
+chk("P2-13c if形式调用2处(新增)", text.count("if _safe_rollback_placeholder(s):") == 2)
+chk("P2-13c 保留路径调用x2", text.count("_keep_partial_hold(s)") == 3,
+    "actual=%d(def+2调用)" % text.count("_keep_partial_hold(s)"))
+chk("P2-4 sell_submit_unknown消费", "if h.get('sell_submit_unknown'):" in text)
+chk("P2-4 死标记已消除(代码4处:写1+弹1+消费2)",
+    text.count("h['sell_submit_unknown'] = True") == 1
+    and text.count("h.pop('sell_submit_unknown', None)") == 1
+    and text.count("if h.get('sell_submit_unknown'):") == 1
+    and text.count("h['sell_submit_unknown'] = False") == 1)
+chk("P2-5 双帽防御", "_caps_g = []" in text and "abs_cap_left(_px_g)" in text)
+chk("P2-5 超帽拒单", "固定量回退: 仓位帽折算不足一手" in text)
+chk("P2-5 MAX_POS_VALUE_ABS帽", "MAX_POS_VALUE_ABS / _px_g" in text)
+
+# 6d P2第三批(P2-2/P2-3/P2-10/P2-11/P2-14)+回退修补 不变量
+chk("P2-2 _FP_DENY集合定义", "_FP_DENY = {" in text)
+chk("P2-2 _fp_keys助手", "def _fp_keys():" in text)
+chk("P2-2 自动捕获接线", "return _fp_calc(sorted(_fp_keys()))" in text)
+chk("P2-2 显式列表已移除",
+    "keys = [" not in text.split("def param_fingerprint")[1].split("def code_fingerprint")[0])
+chk("P2-2 _FP_DENY关键项在位", text.count("'BLACKLIST_FILE'") == 1
+    and text.count("'SENT_STATE'") == 1 and text.count("'PHASE_NAME'") == 1)
+chk("V2.6.85 VERSION 进入 _FP_DENY", "'VERSION',                                              # 版本号" in text)
+chk("P2-3 _STATE_SCHEMA基线", "_STATE_SCHEMA = {'hold': {}, 'done': {}," in text)
+chk("P2-3 _HOLD_MISSING哨兵", "_HOLD_MISSING = object()" in text)
+chk("P2-3 循环前抓原始值", "_hold_raw = disk['hold'] if 'hold' in disk else _HOLD_MISSING" in text)
+chk("P2-3 通用循环跳过hold", text.count("if _fk == 'hold':") == 1)
+chk("P2-3 缺陷B旧模式已消除", "if not isinstance(disk.get('hold'), dict):" not in text
+    and "elif disk.get('hold'):" not in text)
+chk("P2-3 容器损坏冻结分支", "if _hold_raw is not _HOLD_MISSING and not isinstance(_hold_raw, dict):" in text)
+chk("P2-3 坏记录摘除分支", "elif isinstance(_hold_raw, dict) and _hold_raw:" in text)
+chk("P2-3 buys内层校验", "_bad.append('buys.n/codes" in text)
+chk("P2-10 仙股盘中复核", "if RISK_MIN_PRICE > 0 and _f(lp) > 0 and _f(lp) < RISK_MIN_PRICE:" in text)
+chk("P2-11 _fin_unknown_rd助手", "def _fin_unknown_rd():" in text)
+chk("P2-11 报告期未知剔除", "if _ny > 0 and _nm > 0 and not _rd_ok:" in text)
+chk("P2-11 15个月时效校验保留", "if _ny > 0 and _nm > 0 and _rd_ok:" in text)
+chk("P2-14 data_gate知情注释", text.count("P2-14") >= 1 and "NEW_BUY_DATA_BLOCK" in text)
+
+# 6e V2.6.82 Bug C(PYRAMID_BATCHES未定义)/Bug D(print_summary未定义) 不变量
+chk("BUG-C 计划长度比对替代", "_bn_plan = len(h.get('plan_batches') or [])" in text
+    and "if _bn_plan > 0 and batch_total != _bn_plan:" in text)
+chk("BUG-C 旧裸引用已消除", "if batch_total != PYRAMID_BATCHES:" not in text
+    and "% (batch_total, PYRAMID_BATCHES)" not in text)
+chk("BUG-C 修复注释在位", "V2.6.82修复(2026-10-19): 原校验(V2.6.78 P2-2)" in text)
+chk("BUG-D print_summary已定义", text.count("def print_summary():") == 1)
+chk("BUG-D 汇总输出", "本次运行结束汇总" in text and "'[汇总] 本次运行买入%d笔 卖出%d笔" in text)
+chk("BUG-D 收尾强制落盘", "_flush_log(force=True)      # 收尾强制落盘" in text)
+chk("BUG-D atexit双注册完好", any(l.startswith("        atexit.register(print_summary)") for l in lines)
+    and any(l.startswith("        atexit.register(_flush_names_cache, True)") for l in lines))
+chk("BUG-D 函数位于框架入口前", text.index("def print_summary():") < text.index("# ==================== 框架入口 ===================="))
+
+# 6e P3 批次 20 项(V2.6.83)
+chk("P3 FEE_RATE_EST死常量已删", "FEE_RATE_EST = 0.0015" not in text
+    and "原 FEE_RATE_EST" in text)
+chk("P3 RUN_ROUND_GUARD_SEC具名常量", "RUN_ROUND_GUARD_SEC = 5.0" in text
+    and "if _sec_since < RUN_ROUND_GUARD_SEC:" in text)
+chk("P3 _prod_of含16/18场内基金", "_n6[:2] in ('51', '15', '16', '18')" in text)
+chk("P3 死状态字段全清", all(("G." + k + " =") not in text for k in
+    ("banner_note_date", "hourly_buy_note", "hourly_sell_note", "notify_ip_ok",
+     "vol_unit_confirmed", "param_verify_note")))
+chk("P3 推送队列加锁", "G.notify_lock = threading.Lock()" in text
+    and "with G.notify_lock:" in text and text.count("with G.notify_lock:") == 2)
+chk("P3 trigger_log不再静默", "[触发日志] 格式化失败" in text)
+chk("P3 备份成功才置当日标记", "G.state_bak_date = G.today      # 成功才标记" in text
+    and "G.state_bak_date = ''           # 重置标记" in text)
+chk("P3 旧GBK状态文件兼容读取", "except UnicodeDecodeError:" in text
+    and "已按GBK兼容读取" in text)
+chk("P3 abs_cap_left价格无效返0", "价格无效(%.4f), 无法折算可买股数" in text)
+chk("P3 exit_price_needed按品种计费", "def exit_price_needed(h, code=''):" in text
+    and "net_pnl_if_sell(h, px, code)" in text
+    and text.count("exit_price_needed(h, s)") == 6)
+chk("P3 状态签名持锁", any(l.startswith("    with G.state_lock:") for l in lines)
+    and text.index("def strategy_status_signature") < text.index("    with G.state_lock:", text.index("def strategy_status_signature")))
+chk("P3 atr_of日期口径统一", "if G.today and _bardate_loose(d) == G.today:" in text)
+chk("P3 市值缓存300秒", "MARKET_CAP_CACHE_SEC = 300" in text)
+chk("P3 ST清单缺失强提醒", "历史ST清单未配置(文件不存在), 历史ST剔除未生效" in text)
+chk("P3 确认入场/五日线改break", "超窗后再往前必然更超, 直接结束" in text
+    and "破位过久后续必然更久" in text)
+chk("P3 财务行单侧日期容错", "_rd_c = rd or ad" in text and "_ad_c = ad or rd" in text)
+chk("P3 SENT_LAG_DAYS已消费", "_lag = max(1, int(SENT_LAG_DAYS or 1))" in text)
+chk("P3 情绪线程文案纠偏", "_sent_wlog('后台线程启动失败, 退回同步取数" not in text
+    and "本轮情绪取数跳过, 买入侧保持中性" in text)
+chk("P3 预下载无接口置位(V2.6.104 起该预下载已移除, 改为等下载阶段)",
+    "NoInterfacePlaceholderV26104" not in text
+    and "_waited_dl" in text)
+chk("P3 pyramid死变量fee已删", "删除死变量 fee" in text
+    and text.count("fee = fee_buy(amt, s)") == 1)   # 只剩 ledger_buy 的活变量
+chk("P3 _sent_roll口径注明", "pandas .std(ddof=0)" in text)
+chk("P3 早盘闸门过sent_param",
+    "if _exp_min < sent_param('BUY_MIN_ELAPSED_MIN', BUY_MIN_ELAPSED_MIN):" in text)
+
+# 6f 提前排雷功能(V2.6.83)
+chk("RX 常量齐备", "RISK_EXCLUDE_ON = True" in text
+    and "RISK_EXCLUDE_FILE = 'zt_shrink_risk_exclude.json'" in text
+    and "RISK_EXCLUDE_MAX_AGE_DAYS = 10" in text)
+chk("RX 三函数定义", all(("def %s(" % f) in text for f in
+    ("risk_exclude_path", "_risk_exclude_candidates", "load_risk_exclude", "risk_excluded")))
+chk("RX 账号后缀路径", "return _join_base(stem + _account_suffix() + ext)" in text)
+chk("RX 选股层拦截", "    _rx = risk_excluded(stock)" in text)
+chk("RX 买入发单前拦截", "买入拒绝: %s(发单前复核)" in text)
+chk("RX 加仓发单前拦截", "分批加仓拒绝: %s(发单前复核)" in text)
+chk("RX 只拦买不拦卖", text.count("risk_excluded(") == 4)   # 1定义 + 3挂点
+
+# 6g V2.6.87 六项(取数覆盖率/沿用信号/分量标注/ready三态/双实例心跳/入参保护)
+chk("V2.6.87 覆盖率常量", "SENT_COVERAGE_MIN = 0.90" in text)
+chk("V2.6.87 缓存文件常量", "SENT_CACHE_FILE = 'zt_shrink_sent_cache.json'" in text)
+chk("V2.6.87 心跳常量齐备",
+    "HEARTBEAT_FILE = 'zt_shrink_heartbeat.json'" in text
+    and "HEARTBEAT_STALE_SEC = 120" in text
+    and "HEARTBEAT_ALERT_SEC = 300" in text)
+chk("V2.6.87 批量拆分函数", "def _sent_fetch_md_batch(" in text)
+chk("V2.6.87 拆分档位 300->100->30",
+    "_sz = 100 if depth <= 0 else 30" in text and "depth >= 2" in text)
+chk("V2.6.87 异常文本带类型与repr兜底",
+    "def _exc_text(e):" in text and "无异常消息" in text)
+chk("V2.6.87 失败样本入日志", "取数失败样本(最多3条)" in text)
+chk("V2.6.109 完成日志如实写覆盖率(本轮/累积分列, 分子分母配对)",
+    "请求%d只 本轮成功%d只(本轮%.1f%%)" in text
+    and "累积%d只/全市场%d只(累积%.1f%%)" in text
+    and "失败%d只 拆分重试%d次" in text)
+chk("V2.6.109 本轮覆盖率用本轮成功数除本轮请求数(不拿累积冒充)",
+    "_round_pct = (float(_cov.get('ok') or 0) / float(_cov.get('req') or 1)) * 100.0" in text)
+chk("V2.6.87 完成日志不再用股票池长度冒充取到数",
+    "内置通道取数完成: 标的%d只(预下载%d只)" not in text)
+chk("V2.6.87 沿用函数定义", "def _sent_use_last_good(why):" in text)
+chk("V2.6.87 沿用不写 last_fetch_date",
+    "绝不写 last_fetch_date" in text)
+chk("V2.6.87 覆盖率分支优先于 rows 判空",
+    text.index("if _ratio is not None and _ratio < _min_cov:")
+    < text.index("if not rows:\r\n            _sent_degrade_alert('数据不可用')"))
+chk("V2.6.106 覆盖口径改为跨轮累积(应用侧 acc_ratio)",
+    "_acc_r = _cov.get('acc_ratio')" in text
+    and "_ratio = _acc_r" in text)
+chk("V2.6.106 未达标只挂起不降级(沿用上次成功信号)",
+    "SENT_STATE['acc_pending'] = True" in text
+    and "SENT_STATE['acc_pending'] = False" in text)
+chk("V2.6.106 取数侧覆盖判定同口径(累积)",
+    "_min_cov = SENT_COVERAGE_MIN" in text
+    and "def _cov_min(" not in text)   # 旧局部函数已删除(注释提及不算)
+chk("V2.6.104 预算值 110 秒(双窗口让路)",
+    "_BUDGET_SEC = 110.0" in text
+    and "_BUDGET_SEC = 180.0" not in text)
+chk("V2.6.104 批间限速 + 仅在上一轮被截断时启用",
+    "_pace_on and _nb_ok >= 1 and _pace_sec > 0" in text
+    and "time.sleep(_pace_sec)" in text
+    and "_pace_on = bool(int(SENT_STATE.get('bh_streak') or 0) >= 1)" in text)
+chk("V2.6.104 情绪取数不再自调 download_history_data 预下载",
+    "_api(download_history_data, _s, '1d', _start, _end)" not in text
+    and "已等待日线下载阶段结束" in text
+    and "G, 'dl_phase'" in text)
+chk("V2.6.104 让路明细进日志",
+    "'[让路] 双实例共存限速: 批间等待%d批x%.1f秒=%.0f秒, '" in text)
+chk("V2.6.103 修复1-A 取数顺序按当日种子打乱(保证截断时为均匀抽样)",
+    "random.Random(str(G.today or '')).shuffle(_stocks)" in text
+    and "_stocks = sorted(set(_stocks))" in text)
+chk("V2.6.96 下载期间推迟情绪取数",
+    "if int(getattr(G, 'dl_phase', 0) or 0) == 1:" in text
+    and "日线下载进行中(阶段1), 情绪取数本轮推迟" in text
+    and "SENT_STATE['dl_wait_ts'] = _now" in text)
+chk("V2.6.96 推迟满30分钟强制发起",
+    "(_now - _dl_since) < 1800.0" in text
+    and "日线下载已持续%d分钟仍未完成" in text)
+chk("V2.6.96 下载块x5且预算用满",
+    "_chunk_n = DOWNLOAD_CHUNK * 5" in text
+    and "while G.dl_i < _u_tot and not G.no_download:" in text
+    and "if _got < len(_chunk):" in text)
+chk("V2.6.96 未把块大小写成模块级常量(保指纹)",
+    "DOWNLOAD_CHUNK = 400" in text
+    and "DOWNLOAD_CHUNK = 2000" not in text)
+chk("V2.6.96 下载期间不写 last_try_ts(不被节流卡住)",
+    text.index("SENT_STATE['dl_wait_ts'] = _now")
+    < text.index("SENT_STATE['last_try_ts'] = _now"))
+chk("V2.6.87 信号分量标注", "def _sent_comp_note(sig):" in text
+    and "信号分量: %s" in text)
+chk("V2.6.87 compute 返回分量字段",
+    "'comp_have': _have_k" in text and "'comp_miss': _miss_k" in text
+    and "'comp_total': len(_all_k)" in text)
+chk("V2.6.87 fetching 置位与复位",
+    "SENT_STATE['fetching'] = True" in text
+    and "SENT_STATE['fetching'] = False" in text)
+chk("V2.6.87 ready 三态文案", "取数中(后台线程" in text and "尚未发起取数" in text)
+chk("V2.6.87 心跳文件名带账号+PID", "def heartbeat_path():" in text
+    and "%s%s_%d%s" in text)
+chk("V2.6.87 心跳循环变量不用 _f(防遮蔽模块级函数)",
+    "for _fn in os.listdir(_base):" in text
+    and "for _f in os.listdir(_base):" not in text)
+chk("V2.6.87 心跳只告警不阻断", "本策略只告警, 不阻断下单" in text)
+chk("V2.6.87 心跳接入 after_init + timer_poll",
+    text.count("heartbeat_tick(") == 3)
+chk("V2.6.87 buy_stock lp<=0 保护", "if _f(lp) <= 0:" in text
+    and "无有效价格(lp=%.3f)" in text)
+chk("V2.6.87 早期取数失败也置覆盖率0(走沿用)",
+    text.count("SENT_STATE['cover'] = {'req': 0, 'ok': 0, 'fail': 0, 'retry': 0,") == 3)
+chk("V2.6.87 lp 保护早于除零点",
+    text.index("无有效价格(lp=%.3f)") < text.index("vol = int(amount / lp / _lot)")
+    if "vol = int(amount / lp / _lot)" in text else False)
+
+chk("V2.6.88 _float_share 定义", "def _float_share(stock):" in text)
+chk("V2.6.88 换手率自算公式", "_v_t0 * float(DAILY_VOL_UNIT) / _sh_t" in text)
+chk("V2.6.88 自算早于缺失放行",
+    text.index("_sh_t = _float_share(s)") < text.index("st_turnover_missing += 1"))
+chk("V2.6.88 自算计数三处(初始化/递增/漏斗)",
+    text.count("st_turnover_calc") == 4)
+chk("V2.6.89 漏斗换手率口径拆两向", "换手率不符%d(剔除:过低%d/过高%d; 旁注:自算%d/缺失放行%d)" in text)
+chk("V2.6.88 换手率阈值未被改动",
+    "ZT_TURNOVER_MIN = 0.05" in text and "ZT_TURNOVER_MAX = 0.20" in text)
+chk("V2.6.88 心跳启动自证", "[安全] 心跳已就绪" in text
+    and "双实例检测生效" in text)
+chk("V2.6.88 心跳写失败不再静默", "心跳文件写入失败(双实例检测将不可用)" in text)
+_i_hb = text.index("log('[安全] 心跳已就绪")
+chk("V2.6.88 心跳自证受 force 约束",
+    text.rfind("if force:", 0, _i_hb) > 0 and (_i_hb - text.rfind("if force:", 0, _i_hb)) < 40)
+chk("V2.6.88 亏损文案不重复扣除", "不重复扣除" in text)
+chk("V2.6.88 基准量不足加空格", "基准量不足 %d" in text)
+
+# 6g V2.6.89 心跳告警分档 + 换手率可审计 + _float_share 异常提示
+chk("V2.6.89 未新增心跳常量(参数指纹不变)",
+    "HEARTBEAT_LIVE_SEC" not in text and "HEARTBEAT_DYING_SEC" not in text)
+chk("V2.6.89 分档阈值用 HEARTBEAT_SEC 倍数", "_live_max = HEARTBEAT_SEC * 1.5" in _body)
+_i_live = _body.index("if _kind == 'live':")
+_i_alert = _body.index("[安全][告警] 检测到另一个策略实例正在运行")
+chk("V2.6.89 [告警] 只在 live 档(残留档不喊立即关闭)", _i_alert > _i_live)
+chk("V2.6.89 残留档降级为[提示]", "[安全][提示] 检测到疑似残留心跳(非活跃)" in _body)
+chk("V2.6.89 残留档只在进档时提示一次", "_prev_kind != 'stale'" in _body)
+chk("V2.6.89 同伴退出清 peer_kind", _body.count("_HB_STATE['peer_kind'] = ''") == 1)
+chk("V2.6.89 心跳状态字典含分档键",
+    "'peer_kind': ''" in _body and "'last_stale_ts': 0.0" in _body)
+chk("V2.6.89 换手率计数拆两向(各3处)",
+    _body.count("st_turn_lo") == 3 and _body.count("st_turn_hi") == 3,
+    "lo=%d hi=%d" % (_body.count("st_turn_lo"), _body.count("st_turn_hi")))
+chk("V2.6.89 候选带涨停日换手率", _body.count("turn_t0") == 2,
+    "actual=%d" % _body.count("turn_t0"))
+chk("V2.6.89 优选项打印涨停日换手率", "涨停日换手=%.1f%%" in _body)
+chk("V2.6.89 _to 兜底早于换手率闸门",
+    _body.index("_to = 0.0") < _body.index("if ZT_TURNOVER_MIN > 0 or ZT_TURNOVER_MAX > 0:"))
+chk("V2.6.89 _float_share 异常不静默",
+    "流通股本取数异常" in _body and "_fshare_err_ts" in _body)
+chk("V2.6.89 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# 6h V2.6.90 情绪取数: 总预算 + 整体熔断 + 跳过日志带时长
+chk("V2.6.90 预算常量未提到模块级(防参数指纹漂移)",
+    "\n_BUDGET_SEC = " not in text and "\nSENT_FETCH_BUDGET_SEC" not in text)
+chk("V2.6.104 预算值 110 秒(双实例共存让路)", "_BUDGET_SEC = 110.0" in _body)
+chk("V2.6.90 预算起点早于预算检查",
+    _body.index("_t_beg = time.time()") < _body.index("if time.time() - _t_beg >= _BUDGET_SEC:"))
+chk("V2.6.90/V2.6.106 预算检查在分批循环内(每批都查)",
+    _body.index("if time.time() - _t_beg >= _BUDGET_SEC:") > _body.index("for _i in range(0, len(_todo), 300):"))
+chk("V2.6.90 超预算带部分结果收尾", "_budget_hit = True" in _body and "if _budget_hit:" in _body)
+chk("V2.6.90 熔断判据=连续3批零成功且累计零成功",
+    "if _fail_streak >= 3 and _box[0] == 0:" in _body)
+chk("V2.6.90 成功批会清零连续失败计数", "if _box[0] > _ok_before:" in _body
+    and "_fail_streak = 0" in _body and "_fail_streak += 1" in _body)
+chk("V2.6.90 熔断/超预算都不再进第二轮全字段重试",
+    "if _abort or _budget_hit or _attempt == 1:" in _body)
+chk("V2.6.90 零成功也写覆盖率明细(不再 失败0只+覆盖率0%)",
+    _body.count("_cov.update(_cov_new)") == 2 and "'samples': list(_box[3])" in _body)
+chk("V2.6.90 熔断告警文案", "判定行情接口整体不可用" in _body)
+chk("V2.6.90 超预算告警文案", "情绪取数触发总预算" in _body and "本轮放弃" in _body)
+chk("V2.6.90 跳过日志带已运行秒数", "情绪取数线程已在运行(已运行%d秒)" in _body)
+chk("V2.6.90 疑似卡死提示保留(V2.6.135 把阈值提到 900 秒)",
+    "疑似卡死" in _body and "_age > 900.0" in _body)
+chk("V2.6.90 锁不可用与线程在跑拆两条文案",
+    "情绪取数锁不可用(无法并发保护)" in _body
+    and "情绪取数线程已在运行或锁不可用" not in _body)
+chk("V2.6.90 fetch_start_ts 写入与读取各一处",
+    _body.count("fetch_start_ts") == 2,
+    "actual=%d" % _body.count("fetch_start_ts"))
+chk("V2.6.90 取数起点在主线程发起处(非线程内)",
+    _body.index("SENT_STATE['fetch_start_ts'] = time.time()") <
+    _body.index("def _sent_fetch_worker("))
+chk("V2.6.90 情绪三项未触碰买卖判据", "NEVER_STOP_LOSS = True" in _body)
+chk("V2.6.90 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# 6i V2.6.91 世代标记 + 完成行耗时 + 心跳节拍
+chk("V2.6.91 世代三函数齐备",
+    "def gen_path():" in _body and "def gen_announce():" in _body
+    and "def _gen_superseded():" in _body)
+chk("V2.6.91 世代状态用 dict(非大写常量, 不入参数指纹)",
+    "_GEN_STATE = {'id': 0.0, 'path': ''}" in _body)
+chk("V2.6.91 启动先宣告世代再打心跳",
+    _body.index("    gen_announce()\r\n") < _body.index("heartbeat_tick(force=True)"))
+chk("V2.6.91 宣告在 after_init 内", _body.index("def after_init(") < _body.index("    gen_announce()\r\n"))
+chk("V2.6.91 取数入口先判世代再拿 G.C",
+    _body.index("    if _gen_superseded():\r\n") <
+    _body.index("    C = getattr(G, 'C', None)\r\n    if C is None:"))
+chk("V2.6.91 每批前判世代且早于预算检查",
+    _body.index("                if _gen_superseded():\r\n") <
+    _body.index("                if time.time() - _t_beg >= _BUDGET_SEC:"))
+chk("V2.6.91 旧代残留直接 return None(不写 cover 不写结果)",
+    _body.count("本线程属旧代残留") == 2)
+chk("V2.6.91 世代严格大于才判被取代", "if _g <= _mine + 1e-6:" in _body)
+chk("V2.6.91 需新代心跳新鲜才压制旧代",
+    "_f(_hd.get('ts') or 0.0)) <= HEARTBEAT_STALE_SEC" in _body)
+_i_gs = _body.index("def _gen_superseded(")
+_i_ge = _body.index("def heartbeat_tick(force=False):")
+_seg_gs = _body[_i_gs:_i_ge]
+chk("V2.6.91 世代探测异常一律放行",
+    "except Exception:" in _seg_gs and _seg_gs.count("return False") >= 4)
+chk("V2.6.91 世代文件按账号隔离(不带PID)",
+    "_join_base('zt_shrink_gen' + _account_suffix() + '.json')" in _body)
+chk("V2.6.91 完成行带耗时(V2.6.113 四段 -> V2.6.115 六段 -> V2.6.118 九段 -> V2.6.119 解析内细分)",
+    "耗时%.0f秒(列表%.0f+等下载%.0f+批内下载%.0f" in _body
+    and "+解析%.0f[转dict%.1f+提取%.1f+其他%.1f]" in _body
+    and "+指数量能%.0f+落盘%.1f+组装%.1f+其他%.1f=%.0f秒" in _body
+    and "取数覆盖%d天(起点%s) 统计窗口%d天" in _body
+    and "覆盖日期%d天 窗口起点%s" not in _body
+    and "_elapsed = time.time() - _t_beg" in _body)
+chk("V2.6.91 心跳节流系数 0.8", "(HEARTBEAT_SEC * 0.8)" in _body)
+chk("V2.6.91 未新增心跳大写常量",
+    "HEARTBEAT_LIVE_SEC" not in _body and "HEARTBEAT_TICK_MIN" not in _body)
+chk("V2.6.91 取数线程创建点仍只有 1 处", _body.count("_th = threading.Thread(") == 1)
+chk("V2.6.91 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.91 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# 6j V2.6.92 排雷清单当日重载 + 数据源健康
+chk("V2.6.92 指纹工具函数齐备",
+    "def _risk_ex_sig_of(path):" in _body and "def _risk_ex_cur_sig():" in _body)
+chk("V2.6.92 当日已装载不再直接返回缓存",
+    "if G.risk_ex_date == G.today:\r\n        return G.risk_ex" not in _body
+    and "_cur_sig = _risk_ex_cur_sig()" in _body)
+chk("V2.6.92 指纹比对 60 秒节流",
+    "if time.time() - _f(getattr(G, 'risk_ex_stat_ts', 0.0)) < 60.0:" in _body)
+chk("V2.6.92 装载成功记账指纹", "G.risk_ex_sig = _risk_ex_sig_of(cand)" in _body)
+chk("V2.6.92 重载失败沿用旧表(不用空表覆盖)",
+    "if _reload and not data and _prev and (err or not _found):" in _body)
+chk("V2.6.92 数据源失败可见", "类数据源失败" in _body and "_src.get(k) or {}).get('err')" in _body)
+chk("V2.6.92 公告实扫天数与窗口比对",
+    "仅覆盖%d天窗口的%.0f%%" in _body and "cover_from" in _body)
+chk("V2.6.97 公告缺口同比推算两条分支(ann>0 推算 / ann=0 明示未采到)",
+    "同比推算%d天满覆盖约%d只" in _body
+    and "ann类0只(该类可能完全未采到, 不等于无风险)" in _body)
+chk("V2.6.98 落选先存后打(_rej 在切片前赋值, 打印在优选行之后)",
+    _body.index("_rej = list(G.candidates[MAX_DAILY_PICKS:])")
+    < _body.index("G.candidates = G.candidates[:MAX_DAILY_PICKS]")
+    and _body.index("for _rlc in _rej:") > _body.index("第%d优先"))
+chk("V2.6.98 未触发截断时 _rej 也有名字", "    else:\r\n        _rej = []" in _body)
+chk("V2.6.98 候选数两个口径点明", "上方漏斗" in _body and "状态行" in _body)
+chk("V2.6.98 回撤负数换算成上涨", "昨收上涨%.1f%%" in _body)
+chk("V2.6.98 数据阶段中文映射(0=已完成 1=下载中 2=待加载)",
+    "{0: u'已完成', 1: u'下载中', 2: u'待加载'}" in _body)
+chk("V2.6.98 补选股有下载兜底(清 last_dl/last_init 重置阶段机)",
+    "G.state['last_init_date'] = ''" in _body and "G.state['last_dl_date'] = ''" in _body
+    and "G.dl_phase = 0" in _body and "G.rsdl_reset_n = _rs_n + 1" in _body)
+chk("V2.6.98 重置上限2次防反复下载", "if _rs_n >= 2:" in _body)
+chk("V2.6.98 无下载接口时只告警不重置", "且本机无 download_history_data 接口" in _body)
+chk("V2.6.98 补齐即清零重试计数", "G.rescreen_tries = 0        # V2.6.98(2)" in _body)
+chk("V2.6.98 连续3次才触发(不新增模块级常量)",
+    "if _tries < 3:" in _body
+    and "RESCREEN_DOWNLOAD_AFTER" not in _body and "RSDL_RESET_MAX" not in _body)
+chk("V2.6.97 下载完成行补耗时均速",
+    "(完成, 耗时%d秒 均速%.1f只/秒)" in _body and "G.dl_t0 = time.time()" in _body)
+chk("V2.6.92 新增状态用小写 G 属性(不入参数指纹)",
+    "G.risk_ex_sig = None" in _body and "RISK_EX_SIG" not in _body
+    and "RISK_EX_RELOAD_SEC" not in _body)
+chk("V2.6.92 清单路径规则未动", "stem + _account_suffix() + ext" in _body)
+chk("V2.6.92 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.92 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# 6k V2.6.93 三项纯日志修复(不改交易/取数行为)
+chk("V2.6.93 异常压缩辅助函数", "def _risk_src_err_short(e):" in _body)
+chk("V2.6.93 异常优先取类名", "_cls = _s.split('(')[0].strip()" in _body)
+chk("V2.6.93 无类名才截断且加省略号", "_s[:40] + '...'" in _body)
+chk("V2.6.93 旧裸截断已清除", "get('err') or '失败')[:40]" not in _body)
+chk("V2.6.93 告警走压缩函数", "_risk_src_err_short((_src.get(k) or {}).get('err'))" in _body)
+chk("V2.6.93 推送副本不重复错误串", "本条是上一行日志的推送副本" in _body
+    and "清单数据源失败: %s' % _bdet" not in _body)
+chk("V2.6.93 沿用信号打印覆写人话", "_ovc = _sent_override_note(_g.get('overrides') or {})" in _body)
+chk("V2.6.93 沿用信号无覆写也明说", "沿用信号未携带参数覆写" in _body)
+chk("V2.6.93 沿用信号带处置建议", "请先修好行情接口让取数恢复" in _body)
+chk("V2.6.93 批数计数只初始化一处", _body.count("_nb_ok = 0") == 1)
+chk("V2.6.93 批数初始化早于批循环",
+    _body.index("_nb_ok = 0") < _body.index("for _attempt in (0, 1):"))
+chk("V2.6.93 每批完成 +1", _body.count("_nb_ok += 1") == 1)
+chk("V2.6.93 预算告警含批数(V2.6.113 四段 -> V2.6.115 六段口径)",
+    "(%d批x300只), 余下%d只本轮放弃" in _body
+    and "【分段耗时】列表%.0f + 等下载%.0f + 批内下载%.0f(最慢批%.0f)" in _body)
+chk("V2.6.93 预算告警解释不可中断", "预算只在批间检查、单批接口调用不可中断" in _body)
+chk("V2.6.113 预算告警给四段归因指引(取代被污染的均速倍数)",
+    "哪段最大就先查哪段" in _body
+    and "解析大=本地CPU或取数窗口过长" in _body
+    and "本轮慢%.0f倍" not in _body
+    and "_per_b" not in _body)
+chk("V2.6.93 未新增模块级大写常量",
+    "RISK_SRC_ERR" not in _body and "SENT_BUDGET" not in _body)
+chk("V2.6.93 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.93 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# 7 MD5
+# 6l V2.6.94 排雷命中数拆项 + 命中留痕 + st 口径(纯日志/兜底, 不改交易判定)
+chk("V2.6.94 四档计数器初始化", "st_excl_risk = st_excl_st = st_excl_board = st_excl_oth = 0" in _body)
+chk("V2.6.94 命中明细独立列表", "risk_ex_hits = []" in _body)
+chk("V2.6.94 排雷命中分支", "elif _exr.startswith('排雷命中'):" in _body)
+chk("V2.6.94 ST 精确匹配分支", "elif _exr == 'ST':" in _body)
+chk("V2.6.94 板块分支", "elif _exr in ('KCB', 'CYB'):" in _body)
+chk("V2.6.94 未预期原因单独计数", "st_excl_oth += 1" in _body)
+chk("V2.6.94 明细上限40条", "if len(risk_ex_hits) < 40:" in _body)
+chk("V2.6.94 明细不进 blocked(不破坏账目)",
+    "risk_ex_hits.append" in _body and "blocked.append" not in
+    _body[_body.index("risk_ex_hits.append"):_body.index("risk_ex_hits.append") + 200])
+chk("V2.6.94 漏斗四档文案", "'板块或名称排除%d(排雷清单%d/ST %d/板块 %d/名称取数失败%d%s)" in _body)
+chk("V2.6.94 漏斗参数含 other 兜底", "(u'/其它%d' % st_excl_oth) if st_excl_oth else u''" in _body)
+chk("V2.6.94 装载行带 st 注", "已装载提前排雷清单%d只(%s, 标签重叠%d只) 文件=%s%s" in _body)
+chk("V2.6.94 读 fallback_n", "_stfb = int(_sti.get('fallback_n') or 0)" in _body)
+chk("V2.6.94 兜底成功文案(V2.6.95 已拆成 本地+公告独有)", "st类=%d只 = 本地清单兜底%d + 公告简称独有%d(生成端st源失败)" in _body)
+chk("V2.6.94 兜底失败文案", "仅为公告简称兜底, 数量随--ann-pages波动" in _body)
+chk("V2.6.94 未新增模块级大写常量",
+    "ST_FALLBACK" not in _body and "EXCL_RISK" not in _body)
+chk("V2.6.94 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.94 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+# 6m V2.6.95 下载进度跨桶打印 + st 账目拆分 + 启动自检(纯日志, 不改交易判定)
+chk("V2.6.95 桶号字段初始化", bool(re.search(r"^G\.dl_mark = -1", _body, re.M)))
+chk("V2.6.95 新一轮下载重置桶号", "G.dl_mark = -1      # V2.6.95" in _body)
+chk("V2.6.95 旧 %2000 判定已移除", "G.dl_i % 2000" not in _body)
+chk("V2.6.95 跨桶打印条件", "if _bucket != getattr(G, 'dl_mark', -1) or G.dl_i >= _u_tot:" in _body)
+chk("V2.6.95 末值取 min 不越界", "log('下载进度', min(G.dl_i, _u_tot), '/', _u_tot)" in _body)
+chk("V2.6.95 st 总量按 tags 实数", "_st_tot = _cnt.get('st', 0)" in _body)
+chk("V2.6.95 st 公告独有=总量-兜底", "_st_ann_only = (_st_tot - _stfb) if _st_tot > _stfb else 0" in _body)
+chk("V2.6.95 st 总量不小于兜底", "max(_st_tot, _stfb)" in _body)
+chk("V2.6.95 自检含排雷清单项", "('提前排雷清单', _rex_p, RISK_EXCLUDE_ON)," in _body)
+chk("V2.6.95 自检按候选顺序取真实路径", "for _c in _risk_exclude_candidates():" in _body)
+chk("V2.6.95 缺失项收集", "_miss = []" in _body and "_miss.append(_lb)" in _body)
+chk("V2.6.95 提示改条件打印", "if _miss:" in _body and "缺失项: %s" in _body)
+chk("V2.6.95 旧无条件提示已移除", "[启动自检][提示] 上面显示缺失的文件" not in _body)
+chk("V2.6.95 未新增模块级大写常量",
+    "DL_MARK" not in _body and "PROG_BUCKET" not in _body)
+chk("V2.6.95 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.95 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+# ---------------- V2.6.105: 1m 冻结不再清零 tick 价 + 冻结取证 ----------------
+chk("V2.6.105 冻结分支保留 tick 价(src=1m_stale_px_kept)",
+    "_t2['src'] = '1m_stale_px_kept'" in _body
+    and "_t2['src'] = '1m_stale'" in _body)
+chk("V2.6.105 保留价分支以 _keep_px > 0 为条件",
+    "_keep_px = _f(_t2.get('lastPrice'))" in _body
+    and "if _keep_px > 0:" in _body)
+chk("V2.6.105 冻结时 volume 仍置 0(不拿 tick 量混口径)",
+    "_t2['volume'] = 0.0" in _body
+    and "_t2['vol_ok'] = False" in _body)
+chk("V2.6.105 冻结取证: 距当前秒数",
+    "_stale_gap = float(time.time()) - float(_last_k)" in _body
+    and "_t2['stale_gap'] = _stale_gap" in _body)
+chk("V2.6.105 冻结取证: 冻结前 src 与 tick 量",
+    "_prev_src = str(_t2.get('src') or '')" in _body
+    and "_had_vol = _f(_t2.get('volume'))" in _body)
+chk("V2.6.105 真无 tick 价仍走旧清零路径(不放松)",
+    "'1m_stale'" in _body
+    and "无可用tick价" in _body)
+chk("V2.6.105 未新增模块级大写常量",
+    "STALE_GAP" not in _body and "PX_KEPT" not in _body)
+chk("V2.6.105 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.106 累积池为小写模块级dict(不进参数指纹)",
+    "_SENT_ACC = {" in _body and "_fp_keys" in _body
+    and "k.isupper() and not k.startswith('_')" in _body)
+chk("V2.6.106 累积池含换日/轮次/挂起键", all(k in _body for k in
+    ("'date': ''", "'md': {}", "'rounds': 0", "'pend_rounds': 0")))
+chk("V2.6.106 每轮只取未取过的标的(_todo)",
+    "_todo = [_c for _c in _stocks if _c not in _acc_md]" in _body
+    and "for _i in range(0, len(_todo), 300):" in _body
+    and "_batch = _todo[_i:_i + 300]" in _body)
+chk("V2.6.106 已取到的绝不再调接口", "_stocks[_i:_i + 300]" not in _body)
+chk("V2.6.106 分批取数透传累积池(形参默认None不改旧行为)",
+    "def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc=None):" in _body
+    and "if acc is not None and _n > 0:" in _body
+    and "start, cnt, box, depth + 1, acc))" in _body)
+chk("V2.6.106 空DataFrame不计入已取到", "_md.get(_c) is not None:" in _body)
+chk("V2.6.106 统计口径用累积池重算(分母统一, 非本轮局部)",
+    "_stats_all = {}" in _body and "if _stats_all:" in _body
+    and "for _s3, _raw3 in _acc_md.items():" in _body)
+chk("V2.6.106 覆盖率展示用累积值", "_ratio_pct = _acc_ratio * 100.0" in _body)
+chk("V2.6.106 cover 记录 round_ok/acc_ok/acc_ratio/rounds",
+    all(k in _body for k in ("_cov['round_ok']", "_cov['acc_ok']",
+                             "_cov['acc_ratio']", "_cov['rounds']")))
+chk("V2.6.106 bootstrap 重置累积池", "_SENT_ACC.update({'date': ''" in _body)
+chk("V2.6.106 未新增模块级大写常量(参数指纹零漂移)", "SENT_ACC_MAX" not in _body
+    and "ACC_ROUNDS" not in _body)
+chk("V2.6.106 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.106 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+chk("V2.6.105 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+chk("V2.6.111 哨兵分支绑代同时绑日期(只写一半 -> 第二轮误判换日整池清空)",
+    "_SENT_ACC['gen'] = _acc_gen_now" in _body
+    and "_SENT_ACC['date'] = _acc_day_now" in _body
+    and _body.index("_SENT_ACC['date'] = _acc_day_now")
+        < _body.index("elif _acc_pool_gen != _acc_gen_now"))
+chk("V2.6.111 绑代与绑日期相邻成对赋值(不再只写一半)",
+    re.search(r"_SENT_ACC\['gen'\] = _acc_gen_now\s+"
+              r"_SENT_ACC\['date'\] = _acc_day_now", _body) is not None)
+chk("V2.6.111 换代判据三分支完整(静默绑定/真换代/换日)",
+    "if _acc_pool_gen < 0.0:" in _body
+    and "elif _acc_pool_gen != _acc_gen_now and abs(" in _body
+    and "elif _SENT_ACC.get('date') != _acc_day_now:" in _body)
+chk("V2.6.111 未新增模块级大写常量(参数指纹零漂移)",
+    "_SENT_ACC_MAX" not in _body and "ACC_DAY" not in _body)
+chk("V2.6.111 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.111 哨兵分支成对绑定的注释仍在(版本链含 V2.6.111)",
+    "V2.6.111: 绑代必须同时绑日期" in _body
+    and "版本号: V2.6.111" in text)
+
+chk("V2.6.112 单批计时与最慢批统计(均速会抹平前快后卡, 必须单列最慢批)",
+    "_t_bat = time.time()" in _body
+    and "_dt_b = time.time() - _t_bat" in _body
+    and "if _dt_b > _b_max:" in _body
+    and "_b_max = _dt_b" in _body
+    and "_b_max = 0.0" in _body)
+chk("V2.6.112 告警仍保留最慢批读数(V2.6.113 起并入四段)",
+    "批内下载%.0f(最慢批%.0f)" in _body)
+chk("V2.6.112 最慢批已传入告警实参",
+    re.search(r"_el_bg, _dt_lst, _waited_dl, _t_dl, _b_max, _dt_par,", _body) is not None)
+chk("V2.6.112 未新增模块级大写常量(均为局部量, 参数指纹零漂移)",
+    "_B_MAX" not in _body and "B_MAX_SEC" not in _body)
+chk("V2.6.112 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.112 版本号已升到 V2.6.136(且行尾注释未被吞)",
+    "VERSION = 'V2.6.136'    # 当前版本号(与启动日志和横幅展示一致" in _body)
+chk("V2.6.112 取数逻辑未改(本版只动日志口径, 不碰批次/预算/重试)",
+    "for _i in range(0, len(_todo), 300):" in _body
+    and "if time.time() - _t_beg >= _BUDGET_SEC:" in _body)
+
+# ---- V2.6.113 ----
+chk("V2.6.113(A) 取数窗口为局部量(V2.6.128起 110 自然日)",
+    "        _sent_backfill_days = 110\r\n" in _body
+    and "datetime.timedelta(days=_sent_backfill_days)" in _body)
+chk("V2.6.113(A) K线根数 _cnt 与窗口同步收窄(只改 _start 等于取回来再扔掉)",
+    "int(_sent_backfill_days * 7 / 5)" in _body)
+chk("V2.6.113(A) 模块级 SENT_BACKFILL_DAYS 未改(参数指纹零漂移)",
+    "SENT_BACKFILL_DAYS = 400" in _body)
+chk("V2.6.113(B) 四段计时变量齐全",
+    "_t_lst = time.time()" in _body
+    and "_dt_lst = time.time() - _t_lst" in _body
+    and "_t_dl = 0.0" in _body
+    and "_t_dl += _dt_b" in _body
+    and "_t_par = time.time()" in _body
+    and "_dt_par = time.time() - _t_par" in _body)
+chk("V2.6.113(B) 时序: 列表 -> 批内 -> 解析(解析计时必须在批循环之后)",
+    _body.index("_dt_lst = time.time() - _t_lst") < _body.index("_t_dl += _dt_b")
+    and _body.index("_t_dl += _dt_b") < _body.index("_dt_par = time.time() - _t_par"))
+chk("V2.6.113(C) 落盘三函数齐全",
+    "def _sent_acc_path()" in _body
+    and "def _sent_acc_dump()" in _body
+    and "def _sent_acc_load()" in _body)
+chk("V2.6.113(C) 读盘必须日期+世代双校验(缺一不可)",
+    "_day != _day_now" in _body and "abs(_gen - _gen_now) > 1e-6" in _body)
+chk("V2.6.113(C) 恢复接在换代/换日判定之后(先恢复会带进旧样本)",
+    _body.index("if _acc_why:") < _body.index("if not _SENT_ACC.get('md'):"))
+chk("V2.6.113(C) 落盘有节流且失败只告警一次",
+    "_acc_dump_ts) >= 60.0" in _body and "_n_fail <= 1" in _body)
+chk("V2.6.113(C) 落盘失败不阻断取数(挂 try/except)",
+    "累积池落盘异常(不影响取数)" in _body)
+chk("V2.6.113(C) 文件名用 _account_suffix 拼接, 未新增模块级常量",
+    "_join_base('zt_shrink_sent_acc' + _account_suffix() + '.json')" in _body
+    and "SENT_ACC_FILE" not in _body)
+chk("V2.6.113 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.113 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# ---- V2.6.114: 修 io 未导入 ----
+chk("V2.6.114 落盘读写不再用 io.open(本文件从未 import io)",
+    "io.open" not in _body)
+chk("V2.6.114 改用内置 open 且保留 newline=''(防 CRLF 被转换)",
+    _body.count("open(_tmp, 'w', encoding='utf-8', newline='')") == 1
+    and _body.count("open(_p, 'r', encoding='utf-8', newline='')") == 1)
+_imp = [l for l in lines if l.startswith('import ') or l.startswith('from ')]
+chk("V2.6.114 落盘引用的模块都在母版 import 清单内",
+    'json' in _imp[0] and 'os' in _imp[0] and 'time' in _imp[0] and 'io' not in _imp[0])
+
+# ---- V2.6.115: 第五段(指数量能) + 收尾开销 ----
+chk("V2.6.115 指数量能段起止齐全(第五段)",
+    "_t_amt = time.time()" in _body
+    and "_dt_amt = time.time() - _t_amt" in _body
+    and _body.index("_t_amt = time.time()") < _body.index("_dt_amt = time.time() - _t_amt"))
+chk("V2.6.115 指数量能计时包住那次接口调用(起在 _api 之前, 止在 except 之后)",
+    _body.index("_t_amt = time.time()") < _body.index("_idx = _api(C.get_market_data_ex, ['amount']")
+    and _body.index("_idx = _api(C.get_market_data_ex, ['amount']")
+        < _body.index("_dt_amt = time.time() - _t_amt"))
+chk("V2.6.115 失败分支也能拿到读数(_dt_amt 在 except 之后才赋值)",
+    _body.index("上证指数量能获取失败(仅缺成交额字段, 不阻断)")
+        < _body.index("_dt_amt = time.time() - _t_amt"))
+chk("V2.6.118 收尾由三段回算(不再是 _elapsed 直接减, 保证九段恒等于总耗时)",
+    "_t_over = _dt_dump + _dt_asm + _dt_rest" in _body
+    and "_dt_rest = _elapsed - _t_sum4 - _dt_amt - _dt_dump - _dt_asm" in _body)
+chk("V2.6.115 收尾开销钳零(防浮点/时钟回拨写出负值)",
+    "_t_over < 0.0" in _body and "_t_over = 0.0" in _body)
+chk("V2.6.118 完成行九段之和自洽(落盘+组装+其他 取代原收尾一段)",
+    "+指数量能%.0f+落盘%.1f+组装%.1f+其他%.1f=%.0f秒" in _body
+    and "_t_sum4 + _dt_amt + _t_over" in _body)
+chk("V2.6.118 完成行实参顺序与格式串一致(_dt_dump/_dt_asm/_dt_rest 紧跟 _dt_amt)",
+    re.search(r"_dt_lst, _waited_dl, _t_dl, _dt_par,\s*\n\s*_dt_bars_acc, _dt_ext_acc, _dt_pend, _dt_amt,\s*\n\s*_dt_dump, _dt_asm, _dt_rest,\s*\n\s*_t_sum4 \+ _dt_amt \+ _t_over,",
+              _body) is not None)
+chk("V2.6.118 日志模板已换(收尾一段拆为落盘/组装/其他, 不留旧收尾等号写法)",
+    "(列表%.0f+等下载%.0f+批内下载%.0f+解析%.0f=" not in _body
+    and "四段耗时】列表" not in _body
+    and "+指数量能%.0f+收尾%.0f=" not in _body
+    and "指数量能%.0f + 收尾%.0f" not in _body
+    and "指数量能%.0f + 落盘%.1f + 组装%.1f + 其他%.1f" in _body)
+chk("V2.6.118 告警判读指引按三段重写(落盘/组装/其他 各自归因)",
+    "指数量能大=上证指数那一次调用卡住" in _body
+    and "落盘大=累积池序列化/写盘慢" in _body
+    and "组装大=rows组装与覆盖率判定" in _body
+    and "其他大=指数量能后的准备段与残差" in _body)
+chk("V2.6.118 告警实参已含三段(_dt_dump/_dt_asm/_dt_rest 在 _dt_amt 之后)",
+    re.search(r"_dt_amt, _dt_dump, _dt_asm, _dt_rest,", _body) is not None
+    and "max(0.0, _el_bg - _dt_lst - _waited_dl - _t_dl - _dt_par - _dt_amt)" not in _body)
+chk("V2.6.115 未新增模块级大写常量(全部局部量, 参数指纹零漂移)",
+    "T_LOOP" not in _body and "DT_AMT" not in _body and "T_OVER" not in _body)
+chk("V2.6.115 只加计时不改取数行为(批大小/预算/重试原样)",
+    "for _i in range(0, len(_todo), 300):" in _body
+    and "_BUDGET_SEC = 110.0" in _body
+    and "for _attempt in (0, 1):" in _body)
+chk("V2.6.115 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.115 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# ---- V2.6.116: 累积池落盘复用解析结果(修 3 秒超时截断) ----
+chk("V2.6.116 解析收尾把逐日结果缓存进 _SENT_ACC['ser']",
+    "_SENT_ACC['ser'] = _ser_cache" in _body)
+chk("V2.6.117 缓存结构为 {日期: [close, preClose]}(与落盘 md 同形)",
+    "_one3[_d3] = [round(_c3, 4), round(_p3, 4)]" in _body)
+chk("V2.6.117 缓存失败不影响正确性(写盘端仍有回退逐只解析兜底)",
+    "_SENT_ACC['ser'] = _ser_cache" in _body
+    and "_n_reparse += 1" in _body)
+chk("V2.6.116 落盘优先复用缓存(命中即 continue, 不重复解析)",
+    "_src = _cache if isinstance(_cache, dict) and _cache else None" in _body
+    and "if _src is not None and _c in _src:" in _body)
+chk("V2.6.116 缓存缺失时回落逐只解析(行为不劣化)",
+    "_n_reparse += 1" in _body
+    and "_ser[_c] = _src[_c]" in _body)
+chk("V2.6.116 3 秒超时保护仍在(只截断本次工作, 不取消保护)",
+    "(time.time() - _t0) > 3.0" in _body)
+chk("V2.6.116 落盘说明给出 已存/池内 比例(截断一眼可见)",
+    "仅%d/%d只, 余下下轮续写" in _body and "_n_pool = len(_md)" in _body)
+chk("V2.6.116 回退解析时在日志里明示",
+    "[回退逐只解析%d只]" in _body)
+chk("V2.6.116 池重置时 ser 成对清空(防旧代样本借缓存复活)",
+    re.search(r"'_acc_gen_now,\s*\n\s*'md': \{\}, 'ok': 0, 'fail': 0,\s*\n\s*'rounds': 0, 'pend_rounds': 0,\s*\n\s*'ser': \{\}\}\)", _body) is not None
+    or "'rounds': 0, 'pend_rounds': 0," in _body and "'ser': {}})" in _body)
+chk("V2.6.116 读盘恢复时 ser 一并置空(缓存必须由本轮解析重建)",
+    _body.count("'ser': {}}") >= 2)
+chk("V2.6.116 未动 _bars_to_dict / _df_to_rows(解析口径零改动; V2.6.134 曾试加 keep_from, 实测无收益已撤销)",
+    "def _df_to_rows(df):" in _body and "def _bars_to_dict(df):" in _body
+    and "keep_from" not in _body)
+chk("V2.6.116 未新增模块级大写常量(ser 挂在 _SENT_ACC 上)",
+    "SENT_ACC_SER" not in _body and "ACC_SER" not in _body)
+chk("V2.6.116 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.116 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+# ---- V2.6.117: 修 ser 缓存顺序(落盘必须在解析之后) ----
+chk("V2.6.117 ser 缓存在解析循环内顺手生成(不再额外遍历 _acc_md)",
+    "_ser_cache = {}" in _body
+    and "_one3 = {}" in _body
+    and _body.count("for _s4, _raw4 in _acc_md.items():") == 0)
+chk("V2.6.117 缓存挂载点在解析循环结束之后",
+    _body.index("_ser_cache[_s3] = _one3") < _body.index("_SENT_ACC['ser'] = _ser_cache"))
+chk("V2.6.117 【核心】落盘在解析之后执行(顺序不能反, 反了缓存永远未命中)",
+    _body.index("_dt_par = time.time() - _t_par")
+        < _body.index("_acc_ok_dump, _acc_dump_why = _sent_acc_dump()"))
+chk("V2.6.117 缓存挂载也早于落盘(双重保证)",
+    _body.index("_SENT_ACC['ser'] = _ser_cache")
+        < _body.index("_acc_ok_dump, _acc_dump_why = _sent_acc_dump()"))
+chk("V2.6.117 落盘晚于 abort 熔断与空返回(归零保护未破坏)",
+    _body.index("if _abort:")
+        < _body.index("_acc_ok_dump, _acc_dump_why = _sent_acc_dump()")
+    and _body.index("if not _stats and _acc_cnt <= 0:")
+        < _body.index("_acc_ok_dump, _acc_dump_why = _sent_acc_dump()"))
+chk("V2.6.117 落盘仍受 60 秒节流(未放开为每轮都写)",
+    "_acc_dump_ts) >= 60.0" in _body)
+chk("V2.6.117 落盘失败只告警一次且不阻断取数",
+    "_n_fail <= 1" in _body and "累积池落盘异常(不影响取数)" in _body)
+chk("V2.6.117 诊断尾注仍在(已存/池内 + 回退计数)",
+    "仅%d/%d只, 余下下轮续写" in _body and "[回退逐只解析%d只]" in _body)
+chk("V2.6.117 解析口径未改(_pct3 判涨跌逻辑原样)",
+    "_pct3 = _c3 / _p3 - 1.0" in _body and "if _pct3 >= _th3:" in _body)
+chk("V2.6.117 未新增模块级大写常量",
+    "SER_CACHE" not in _body and "ACC_SER" not in _body)
+chk("V2.6.117 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.117 绝不止损开关未动", "NEVER_STOP_LOSS = True" in _body)
+
+md5 = hashlib.md5(text.encode("gbk")).hexdigest().upper()
+print("MD5=%s" % md5)
+
+# ---- V2.6.118(A) 累积池压缩存储与上限 ----
+chk("V2.6.118(A) 落盘结构版本字段 v=2 已写入",
+    "'v': 2," in _body and "# V2.6.118(A): 结构版本" in _body)
+chk("V2.6.118(A) 落盘上限已由 6.0 放宽到 16.0",
+    "_mb_cap = 16.0" in _body and "_mb_cap = 6.0" not in _body)
+chk("V2.6.118(A) 上限放宽附了成因说明(50字节误估差47倍)",
+    "每只票 ~50 字节" in _body and "2330 字节" in _body)
+chk("V2.6.118(A) 落盘侧生成全局日期池 dates",
+    "_dates = sorted(_dates)" in _body and "'dates': _dates," in _body)
+chk("V2.6.118(A) 落盘侧按下标摊平为数字数组",
+    "_arr = [0.0] * (_n_dates * 2)" in _body
+    and "_arr[_j4 * 2] = float(_cp4[0])" in _body)
+chk("V2.6.118(A) 读盘侧按 v>=2 分支拆包",
+    "if _sv >= 2:" in _body and "_nd = len(_dates)" in _body)
+chk("V2.6.118(A) 读盘侧保留旧 dict 结构分支(升级前落下的盘仍可恢复)",
+    "            for _c, _one in _md.items():" in _body
+    and "盘内样本全部无效" in _body)
+chk("V2.6.118(A) 拆包时过滤 close/preClose 非正的行",
+    "if _cc > 0.0 and _pp > 0.0:" in _body)
+chk("V2.6.118(A) 压缩存储未改 _bars_to_dict 口径",
+    "def _bars_to_dict(df):" in _body and "_dk = _sk[:8]" in _body)
+chk("V2.6.118(A) 未新增模块级大写常量(上限用局部 _mb_cap)",
+    "_MB_CAP" not in _body and "ACC_DISK_MAX_MB = " not in _body)
+
+# ---- V2.6.118(B) 收尾三段 ----
+chk("V2.6.118(B) 落盘段起点计时 _t_dump 在落盘 try 之前",
+    _body.index("_t_dump = time.time()") < _body.index("_acc_dump_ts = float(SENT_STATE.get('acc_dump_ts')"))
+chk("V2.6.118(B) 落盘段终点 _dt_dump 在落盘 except 之后",
+    _body.index("_dt_dump = time.time() - _t_dump")
+        < _body.index("if _stats_all:") )
+chk("V2.6.118(B) 组装段起点 _t_asm 紧跟落盘段终点之后",
+    _body.index("_dt_dump = time.time() - _t_dump")
+        < _body.index("_t_asm = time.time()")
+        < _body.index("if _stats_all:"))
+chk("V2.6.118(B) 组装段终点 _dt_asm 在 _elapsed 之后",
+    _body.index("_elapsed = time.time() - _t_beg")
+        < _body.index("_dt_asm = time.time() - _t_asm"))
+chk("V2.6.118(B) 【核心】_dt_rest 由 _elapsed 反推(而非 _t_over 减)",
+    "_dt_rest = _elapsed - _t_sum4 - _dt_amt - _dt_dump - _dt_asm" in _body)
+chk("V2.6.118(B) 越界时按比例扣减三段(V2.6.120 修正: 只扣组装段会扣不够 -> 九段和>总耗时)",
+    "_ov = -_dt_rest" in _body
+    and "_base = _dt_dump + _dt_asm" in _body
+    and "_k = (_base - _ov) / _base" in _body
+    and "_dt_asm = max(0.0, _dt_asm + _dt_rest)" not in _code_only)
+chk("V2.6.118(B) _t_over 由三段回算(九段恒等于总耗时)",
+    "_t_over = _dt_dump + _dt_asm + _dt_rest" in _body)
+chk("V2.6.118(B) 三段计时均为函数内局部量(不入参数指纹)",
+    "_DT_DUMP" not in _body and "DT_ASM" not in _body and "DT_REST" not in _body)
+chk("V2.6.118(B) 只加计时不改行为(批大小/预算/重试/窗口原样)",
+    "for _i in range(0, len(_todo), 300):" in _body
+    and "_BUDGET_SEC = 110.0" in _body
+    and "for _attempt in (0, 1):" in _body
+    and "        _sent_backfill_days = 110\r\n" in _body)
+
+# ---- V2.6.119 解析段细分计时 ----
+chk("V2.6.119 解析段新增两个累加器(转dict/提取)",
+    "_dt_bars_acc = 0.0" in _body and "_dt_ext_acc = 0.0" in _body)
+chk("V2.6.119 转dict 计时包住 _bars_to_dict",
+    "_t_bt = time.time()" in _body
+    and "_bars3 = _bars_to_dict(_raw3)" in _body
+    and "_dt_bars_acc += time.time() - _t_bt" in _body)
+chk("V2.6.119 _bars_to_dict 对同一只票只调一次(原内联在 for 里, 语义等价)",
+    _body.count("_bars_to_dict(_raw3)") == 1)
+chk("V2.6.119 提取计时包住逐日循环",
+    "_t_ex = time.time()" in _body
+    and "_dt_ext_acc += time.time() - _t_ex" in _body)
+chk("V2.6.119 提取计时终点在内层 for 之后、挂缓存之前",
+    _body.index("_dt_ext_acc += time.time() - _t_ex")
+        < _body.index("if _one3:")
+        < _body.index("_SENT_ACC['ser'] = _ser_cache"))
+chk("V2.6.119 解析三段闭合(残差由总量反推)",
+    "_dt_pend = _dt_par - _dt_bars_acc - _dt_ext_acc" in _body)
+chk("V2.6.119 解析三段越界时两段各扣一半",
+    "_dt_bars_acc + _dt_pend * 0.5" in _body
+    and "_dt_ext_acc + _dt_pend * 0.5" in _body)
+chk("V2.6.119 完成行实参含解析细分(顺序: _dt_par 后紧跟三段)",
+    "_dt_lst, _waited_dl, _t_dl, _dt_par,\r\n"
+    "                      _dt_bars_acc, _dt_ext_acc, _dt_pend, _dt_amt," in _body)
+chk("V2.6.119 告警行实参含解析细分",
+    "_dt_bars_acc, _dt_ext_acc, _dt_pend,\r\n"
+    "                          _dt_amt, _dt_dump, _dt_asm, _dt_rest," in _body)
+chk("V2.6.119 告警判读指引按解析细分重写",
+    "转dict大=跨COM读DataFrame慢" in _body
+    and "提取大=纯Python循环慢" in _body)
+chk("V2.6.119 计时变量均为函数内局部量(不入参数指纹)",
+    "_DT_BARS_ACC" not in _body and "_DT_EXT_ACC" not in _body
+    and "_DT_PEND" not in _body)
+chk("V2.6.119 只加计时不改行为(取数口径原样)",
+    "for _i in range(0, len(_todo), 300):" in _body
+    and "_BUDGET_SEC = 110.0" in _body
+    and "        _sent_backfill_days = 110\r\n" in _body
+    and "if _d3 < _start:" in _body)
+chk("V2.6.119 解析结果结构未变(_one3 仍是 [close, preClose])",
+    "_one3[_d3] = [round(_c3, 4), round(_p3, 4)]" in _body)
+
+# ---- V2.6.120 收尾三项闭合 ----
+chk("V2.6.120 收尾三项恒等(九段之和 == 总耗时, 零容差可验)",
+    "_dt_rest = _elapsed - _t_sum4 - _dt_amt - _dt_dump - _dt_asm" in _body
+    and "_t_over = _dt_dump + _dt_asm + _dt_rest" in _body
+    and "_ov = -_dt_rest" in _body)
+chk("V2.6.120 越界分支三步齐全(比例/全扣/残差归零)",
+    "_k = (_base - _ov) / _base" in _body
+    and "_dt_dump *= _k" in _body
+    and "_dt_asm *= _k" in _body
+    and "超额已不小于两段之和" in _body
+    and "_dt_rest = 0.0" in _body)
+chk("V2.6.120 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.120 绝不止损开关未动",
+    "NEVER_STOP_LOSS = True" in _body)
+
+# ---- V2.6.121/122 取数与统计窗口口径说明 ----
+chk("V2.6.121 新增口径说明行(取数窗口 vs 统计窗口)",
+    "[口径] 取数窗口%d自然日" in _body)
+chk("V2.6.122 交易日数不再按 5/7 折算(否则 85 与日志 81 打架)",
+    "int(_sent_backfill_days * 5 / 7)" not in _body.replace(
+        "int(_sent_backfill_days * 5 / 7) + 60", ""))
+chk("V2.6.122 口径说明写明统计窗口来自 SENT_ZSCORE_WIN",
+    "统计窗口%d交易日(SENT_ZSCORE_WIN)" in _body)
+chk("V2.6.122 口径说明写明冗余天数用途(补停牌缺日)",
+    "冗余约%d天(补停牌缺日, 保证 z 窗口不塌)" in _body)
+chk("V2.6.122 口径说明点明\"取数覆盖N天\"不等于统计天数",
+    "取数覆盖N天" in _body and "不等于统计天数" in _body)
+chk("V2.6.122 口径说明附 EWMA跨度与最小样本",
+    "EWMA跨度%d日 / 最小样本%d日" in _body)
+chk("V2.6.121 完成行末尾追加统计窗口(可直接对照)",
+    "统计窗口%d天" in _body and "int(SENT_ZSCORE_WIN)))" in _body)
+chk("V2.6.122 未改 SENT_ZSCORE_WIN 的值(统计窗口仍是 60)",
+    "SENT_ZSCORE_WIN = 60" in _body)
+chk("V2.6.122 未改统计窗口口径(取数窗口于 V2.6.128 才改为 110)",
+    "        _sent_backfill_days = 110\r\n" in _body)
+chk("V2.6.122 纯日志改动(未新增模块级大写常量)",
+    "SENT_WIN_DESC" not in _body and "WIN_NOTE" not in _body)
+
+print()
+
+
+print()
+
+chk("V2.6.118(B) 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+chk("V2.6.118(B) 绝不止损开关未动",
+    "NEVER_STOP_LOSS = True" in _body or "NEVER_STOP_LOSS=True" in _body)
+chk("V2.6.118 亏损禁卖闸门未动(is_at_loss 仍在卖出最末端)",
+    "is_at_loss(" in _body)
+
+
+# ---------------------------------------------------------------- V2.6.123 宿主环境基准探针
+_i_probe = _body.find("[基准] 宿主执行环境探针")
+_i_par = _body.find("_t_par = time.time()")
+chk("V2.6.125 探针存在且在世代判定之前(任何 return 之前)",
+    0 < _i_probe < _i_par, "probe=%d par=%d" % (_i_probe, _i_par))
+chk("V2.6.123 探针不计入九段(未出现在九段闭合式里)",
+    "_dt_rest = _elapsed - _t_sum4 - _dt_amt - _dt_dump - _dt_asm" in _body
+    and "_pb_" not in _body.split("_dt_rest = _elapsed")[1].split("\n")[0])
+chk("V2.6.123 探针用 probe_done 只跑一轮",
+    "SENT_STATE.get('probe_done')" in _body and "SENT_STATE['probe_done'] = 1" in _body)
+chk("V2.6.123 探针有预算保护(不拖慢取数)",
+    "_pb_budget" in _body and "_pb_used < _pb_budget" in _body)
+chk("V2.6.123 探针异常只吞不抛(不影响取数)",
+    "探针异常(不影响取数)" in _body)
+chk("V2.6.123 探针基线为实测值 0.013/0.005/0.002(非估值 0.02/0.01)",
+    "本机基线0.013秒" in _body and "基线0.005秒" in _body and "基线0.002秒" in _body)
+chk("V2.6.123 倍差保留 1 位小数(low 倍差区间不丢精度)",
+    "慢%.1f倍" in _body and "慢%.0f倍" not in _body.split("[基准] 宿主执行环境探针")[1]
+    .split("判读")[0])
+chk("V2.6.123 探针用局部量(_pb_ 前缀), 不入参数指纹",
+    "_pb_loop" in _body and "_pb_dict" in _body and "_pb_clock" in _body
+    and "\n_PB_" not in _body and "\nPB_" not in _body)
+chk("V2.6.123 未引入母版没有的模块(io/numpy/pandas)",
+    "io.open(" not in _body and "numpy." not in _body and "pandas." not in _body)
+
+
+# ---------------------------------------------------------------- V2.6.124 双前缀 / V2.6.125 探针前移
+import ast as _ast
+import re as _re
+
+# 124-A: 任何 _sent_wlog 正文不得以 [情绪] 开头(会与自动前缀重复)
+_bad_pref = []
+for _l in lines:
+    if "_sent_wlog(" in _l:
+        _m = _re.search(r"_sent_wlog\(\s*'(\[[^']*)", _l)
+        if _m and _m.group(1).startswith("[情绪]"):
+            _bad_pref.append(_l.strip()[:60])
+chk("V2.6.124 无双前缀(正文不得自带'[情绪] ')",
+    not _bad_pref, "残留=%d %s" % (len(_bad_pref), _bad_pref[:2]))
+chk("V2.6.124 口径行前缀为 [口径]",
+    "_sent_wlog('[口径] 取数窗口" in _body)
+chk("V2.6.124 探针三行前缀均为 [基准]",
+    _body.count("_sent_wlog('[基准]") >= 3)
+
+# 125-A: 探针必须是 _sent_fetch_sync 的直接语句(不是嵌套在 if/else 里)
+_t = _ast.parse(_body)
+_fn = None
+for _n in _t.body:
+    if isinstance(_n, _ast.FunctionDef) and _n.name == "_sent_fetch_sync":
+        _fn = _n
+        break
+chk("V2.6.125 找到 _sent_fetch_sync", _fn is not None)
+_pb_stmt = None
+for _s in (_fn.body if _fn else []):
+    if isinstance(_s, _ast.Try):
+        _seg = _ast.get_source_segment(_body, _s) or ""
+        if "宿主执行环境探针" in _seg:
+            _pb_stmt = _s
+chk("V2.6.125 探针 try 是函数体直接语句(非死代码)",
+    _pb_stmt is not None, "未找到顶层探针 Try")
+
+# 125-B: 探针必须早于函数体第一个 return
+if _pb_stmt is not None and _fn is not None:
+    _b4 = [x for x in _fn.body if x.lineno < _pb_stmt.lineno]
+    chk("V2.6.125 探针之前无 return(否则可能走不到)",
+        not any(isinstance(x, _ast.Return) for x in _b4),
+        "前置 return=%d" % len([x for x in _b4 if isinstance(x, _ast.Return)]))
+    # 探针必须早于世代判定 if
+    _gen_if = None
+    for _s in _fn.body:
+        if isinstance(_s, _ast.If):
+            _seg2 = _ast.get_source_segment(_body, _s) or ""
+            if "_gen_superseded()" in _seg2:
+                _gen_if = _s
+                break
+    chk("V2.6.125 探针早于世代判定(旧代也测环境)",
+        _gen_if is None or _pb_stmt.lineno < _gen_if.lineno,
+        "probe=%s gen=%s" % (_pb_stmt.lineno, _gen_if.lineno if _gen_if else None))
+else:
+    chk("V2.6.125 探针早于世代判定(旧代也测环境)", False, "探针未定位")
+
+# 125-C: 探针块缩进为 4(函数体同级, 不是 8)
+_pb_i = None
+for _i, _l in enumerate(lines):
+    if "V2.6.123: 宿主执行环境基准探针" in _l:
+        _pb_i = _i
+        break
+if _pb_i is not None:
+    _ind = len(lines[_pb_i]) - len(lines[_pb_i].lstrip())
+    chk("V2.6.125 探针块缩进=4(函数体同级)", _ind == 4, "indent=%d" % _ind)
+    # 前一个非空行不得是 return/raise
+    _pv = _pb_i - 1
+    while _pv >= 0 and not lines[_pv].strip():
+        _pv -= 1
+    _pvs = lines[_pv].strip() if _pv >= 0 else ""
+    chk("V2.6.125 探针前一行不是 return/raise",
+        not (_pvs.startswith("return") or _pvs.startswith("raise")), "prev=%r" % _pvs[:40])
+else:
+    chk("V2.6.125 探针块缩进=4(函数体同级)", False, "未定位探针注释")
+    chk("V2.6.125 探针前一行不是 return/raise", False, "未定位探针注释")
+
+# 125-D: 探针仍不计入九段
+chk("V2.6.125 探针仍不计入九段口径",
+    "_dt_rest = _elapsed - _t_sum4 - _dt_amt - _dt_dump - _dt_asm" in _body
+    and "_pb_" not in _body.split("_dt_rest = _elapsed")[1].split("\n")[0])
+
+# ---------------------------------------------------------------- V2.6.126 并发探针
+# 126-A: 采样点必须在解析 for 循环体内(不能是死代码/循环外)
+_for_acc = None
+if _fn is not None:
+    for _n in _ast.walk(_fn):
+        if isinstance(_n, _ast.For):
+            _segf = _ast.get_source_segment(_body, _n) or ""
+            if "_acc_md.items()" in _segf and "_pb2_n" in _segf:
+                _for_acc = _n
+                break
+chk("V2.6.126 找到含并发采样的解析 for 循环", _for_acc is not None)
+
+_has_inc = False
+_has_sample = False
+for _s in (_for_acc.body if _for_acc else []):
+    _sseg = _ast.get_source_segment(_body, _s) or ""
+    if "_pb2_n += 1" in _sseg:
+        _has_inc = True
+    if isinstance(_s, _ast.If) and "50000" in _sseg:
+        _has_sample = True
+        _cond = _ast.get_source_segment(_body, _s.test) or ""
+        chk("V2.6.126 采样条件是每40只一次", "% 40" in _cond, "cond=%s" % _cond)
+chk("V2.6.126 for 体内有 _pb2_n 计数", _has_inc)
+chk("V2.6.126 采样 if 是 for 体的直接语句(非嵌套死代码)", _has_sample)
+
+# 126-B: 采样必须早于 for 体内第一个 continue/return
+if _for_acc is not None:
+    _first_exit = None
+    for _s in _for_acc.body:
+        if isinstance(_s, (_ast.Continue, _ast.Return)):
+            _first_exit = _s.lineno
+            break
+    _sample_ln = None
+    for _n in _ast.walk(_for_acc):
+        if isinstance(_n, _ast.Call) and getattr(_n.func, "id", "") == "range":
+            if _n.args and isinstance(_n.args[0], _ast.Constant) and _n.args[0].value == 50000:
+                _sample_ln = _n.lineno
+    chk("V2.6.126 采样早于 for 体第一个 exit(可达)",
+        _sample_ln is not None and (_first_exit is None or _sample_ln < _first_exit),
+        "sample=%s exit=%s" % (_sample_ln, _first_exit))
+
+# 126-C: 并发读数必须从解析段内部输出(在 _dt_par 之后、落盘之前)
+_i_conc = _body.find("[基准] 解析期间并发采样")
+_i_par2 = _body.find("_t_par = time.time()")
+_i_dump2 = _body.find("_t_dump = time.time()")
+chk("V2.6.126 并发探针日志在解析段之后输出",
+    _i_par2 > 0 and _i_conc > _i_par2, "par=%d conc=%d" % (_i_par2, _i_conc))
+chk("V2.6.126 并发探针日志早于落盘段",
+    _i_conc > 0 and _i_dump2 > _i_conc, "conc=%d dump=%d" % (_i_conc, _i_dump2))
+
+# 126-D: 并发探针不得进入九段口径
+chk("V2.6.126 并发探针仍不入九段口径",
+    "_pb2_" not in _body.split("_dt_rest = _elapsed")[1].split("_t_over =")[0])
+
+# 126-E: 探针变量全为局部量, 不入参数指纹
+chk("V2.6.126 并发探针变量为 _pb2_ 前缀局部量(不入指纹)",
+    "_pb2_loop" in _body and "_pb2_sum" in _body and "_pb2_max" in _body
+    and "\n_PB2_" not in _body and "\nPB2_" not in _body)
+
+# 126-F: 探针自身异常必须只吞不抛
+chk("V2.6.126 并发探针异常只吞不抛",
+    "并发探针日志异常(不影响解析)" in _body)
+
+# 126-G: 旧的空闲探针必须仍在(保留作对照)
+chk("V2.6.126 空闲探针仍保留作对照(未被删)",
+    "_sent_wlog('[基准] 宿主执行环境探针" in _body)
+
+# ---------------------------------------------------------------- V2.6.127 基线必须真赋值
+# 127-A: _pb2_base 必须有非零字面量赋值(否则日志守卫恒假, 采样白跑)
+_pb2_base_vals = []
+for _n in _ast.walk(_fn if _fn else _ast.Module(body=[], type_ignores=[])):
+    if isinstance(_n, _ast.Assign):
+        for _t in _n.targets:
+            if isinstance(_t, _ast.Name) and _t.id == "_pb2_base":
+                if isinstance(_n.value, _ast.Constant):
+                    _pb2_base_vals.append(_n.value.value)
+chk("V2.6.127 _pb2_base 有赋值", len(_pb2_base_vals) >= 1, "vals=%s" % _pb2_base_vals)
+chk("V2.6.127 _pb2_base 最终值 > 0(否则日志守卫恒假)",
+    any(isinstance(v, (int, float)) and v > 0 for v in _pb2_base_vals),
+    "vals=%s" % _pb2_base_vals)
+
+# 127-B: 日志守卫存在且引用 _pb2_base
+chk("V2.6.127 日志守卫仍要求 _pb2_base > 0",
+    "_pb2_loop > 0 and _pb2_base > 0" in _body)
+
+# 127-C: 基线值必须与实测一致(0.0022, 5万次空循环)
+chk("V2.6.127 基线写的是实测值 0.0022(非估值)",
+    0.0022 in _pb2_base_vals, "vals=%s" % _pb2_base_vals)
+
+# 127-D: 采样循环前必须已给 _pb2_base 赋值(顺序不能颠倒)
+_i_base_assign = _body.find("_pb2_base = 0.0022")
+_i_sample_loop = _body.find("for _pb2_i in range(50000)")
+chk("V2.6.127 基线赋值早于采样循环",
+    0 < _i_base_assign < _i_sample_loop,
+    "base=%d loop=%d" % (_i_base_assign, _i_sample_loop))
+
+# 127-E: 解析总耗时 _dt_par 必须早于并发探针日志(否则百分比失真)
+_i_dtpar = _body.find("_dt_par = time.time() - _t_par")
+chk("V2.6.127 _dt_par 赋值早于并发探针日志",
+    0 < _i_dtpar < _i_conc, "dtpar=%d conc=%d" % (_i_dtpar, _i_conc))
+
+# ---------------------------------------------------------------- V2.6.128 C 窗口 + A 主线程让路
+# 128-A: A 方案必须用「截止时刻」而非布尔标记(布尔标记遇异常路径清不掉 -> 主线程永久空跑)
+chk("V2.6.128 用截止时刻 windows 而非布尔标记(防永久空跑)",
+    "SENT_STATE['parsing_until'] = time.time() + _par_win" in _body
+    and "SENT_STATE['parsing'] = 1" not in _body,
+    "布尔标记残留" if "SENT_STATE['parsing'] = 1" in _body else "")
+
+# 128-B: 窗口置位必须包住解析循环, 且正常结束收起
+_i_wset = _body.find("SENT_STATE['parsing_until'] = time.time() + _par_win")
+_i_loop2 = _body.find("for _s3, _raw3 in _acc_md.items():")
+_i_wclr = _body.find("SENT_STATE['parsing_until'] = 0.0")
+chk("V2.6.128 窗口置位包住解析循环",
+    0 < _i_wset < _i_loop2, "set=%d loop=%d" % (_i_wset, _i_loop2))
+chk("V2.6.128 解析正常结束立即收起窗口",
+    _i_loop2 < _i_wclr, "loop=%d clr=%d" % (_i_loop2, _i_wclr))
+
+# 128-C: 窗口必须有有限上限(不允许无穷 -> 否则等于永久停摆)
+_m_win = _re.search(r"_par_win = ([\d.]+)", _body)
+chk("V2.6.128 窗口有有限上限(不是无穷)",
+    _m_win is not None and 0 < float(_m_win.group(1)) <= 600,
+    "_par_win=%s" % (_m_win.group(1) if _m_win else None))
+
+# 130-A: 让路只保留在 timer_poll, log_guard 必须恢复无条件 flush
+#   V2.6.128 曾要求两个都检查(==2), 实测证明那是错的: log_guard 只 flush 一次,
+#   却是后台静默期唯一能把日志推下盘的通道, 挡掉它造成 6 分钟日志盲区。
+chk("V2.6.130 仅 timer_poll 检查窗口(log_guard 不再让路)",
+    _body.count("if time.time() < float(SENT_STATE.get('parsing_until') or 0.0):") == 1,
+    "count=%d" % _body.count("if time.time() < float(SENT_STATE.get('parsing_until') or 0.0):"))
+
+# 128-E: 必须用时间戳比较(异常值能放行), 不能写成 `if SENT_STATE.get('parsing_until'):`
+chk("V2.6.128 守卫用时间戳比较(垃圾值/None 自动放行)",
+    "float(SENT_STATE.get('parsing_until') or 0.0)" in _body
+    and "if SENT_STATE.get('parsing_until'):" not in _body)
+
+# 128-F: C 方案窗口值
+chk("V2.6.128 取数窗口改为 110 自然日",
+    "        _sent_backfill_days = 110\r\n" in _body
+    and "        _sent_backfill_days = 120\r\n" not in _body)
+
+# 128-G: 窗口不得小于解析实测上限(180 秒), 否则正常解析期间就提前恢复
+chk("V2.6.128 窗口 >= 解析实测上限 180 秒",
+    _m_win is not None and float(_m_win.group(1)) >= 180.0,
+    "_par_win=%s" % (_m_win.group(1) if _m_win else None))
+
+# ---- V2.6.132: 卡顿落点相位采集 ----
+# 只统计 >=1 秒: 正常抖动 ~3ms, 不设门槛会被噪声淹没, 信号出不来
+chk("V2.6.132 相位采集只统计 >=1 秒的采样",
+    "if _pb2_dt >= 1.0:" in _body)
+chk("V2.6.132 相位落点取结束时刻的秒内余数",
+    "_pb2_k = int(_pb2_t1) % 10" in _body)
+# 循环外初始化: 写在 for 体内会每只票重置, 统计恒为最后一次
+chk("V2.6.132 相位字典与计数在循环外初始化(否则每只票重置)",
+    "_pb2_slow = {}" in _body and "_pb2_slow_n = 0" in _body)
+# desc 必须 str() 拼接; 用 % 嵌套会让实参错位(V2.6.123 踩过)
+chk("V2.6.132 相位日志的 desc 用 str() 拼接(避免 % 嵌套实参错位)",
+    "'sec' + str(_k) + '=' + str(_v)" in _body)
+# 无慢采样时也要有一条, 否则"没输出"与"探针没跑"无法区分
+chk("V2.6.132 相位日志有 else 分支(无慢采样时也要说话)",
+    "本轮无>=1秒的采样(全程流畅)" in _body)
+chk("V2.6.132 相位日志异常只吞不抛",
+    "_pb2_pe" in _body)
+
+# ---- V2.6.133: log_guard 对照实验开关 + 相位间隔序列 ----
+# 开关必须是【函数内局部量】_lg_on, 不是模块级大写常量(那会污染参数指纹)
+chk("V2.6.133 log_guard 开关用函数内局部量 _lg_on(不进参数指纹)",
+    "_lg_on = True       # V2.6.135" in _body)
+chk("V2.6.133 模块级无 LG_ 前缀大写常量(否则参数指纹必漂移)",
+    "LG_ON =" not in _body and "LOG_GUARD_ON =" not in _body)
+# run_time 注册必须被 if _lg_on 包住, 否则开关形同虚设
+chk("V2.6.133 run_time(log_guard) 被 if _lg_on 包住",
+    "if _lg_on:" in _body
+    and "_lg_on:" in _body)
+# 停用分支必须打日志, 否则"没那行"与"注册失败"无法区分
+chk("V2.6.133 停用分支有明确日志(否则与注册失败无法区分)",
+    "log_guard 本轮【已停用】" in _body)
+chk("V2.6.133 开关可一键恢复的说明保留(V2.6.135 改为应急开关表述)",
+    "仅保留作应急开关" in _body)
+# 相位间隔序列: 序列容器必须在循环外初始化
+chk("V2.6.133 相位绝对秒序列在循环外初始化(否则每只票重置)",
+    "_pb2_slow_seq = []" in _body)
+chk("V2.6.133 相位序列记录 (起点秒, 结束秒, 耗时) 三元组",
+    "_pb2_slow_seq.append([int(_pb2_t0), int(_pb2_t1)," in _body)
+# 间隔必须是"起点秒之差", 不是"结束秒之差" —— 结束秒受阻塞时长污染
+chk("V2.6.133 间隔按【起点秒之差】计算(结束秒会被阻塞时长污染)",
+    "_pb2_slow_seq[_gi][0]" in _body
+    and "_pb2_slow_seq[_gi - 1][0]" in _body)
+chk("V2.6.133 间隔日志有单次分支(只有1次时也要说明)",
+    "无法算间隔" in _body)
+chk("V2.6.133 相位采集仍在 if _pb2_dt >= 1.0 体内(未被挪出)",
+    "if _pb2_dt >= 1.0:" in _body)
+# 铁律复核: 本版不得引入 stop_order
+chk("V2.6.133 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# ---- V2.6.134: 落盘 3 秒截断可观测 ----
+# 说明: 本版曾尝试在 _df_to_rows 加 keep_from 丢掉窗口外的行(实测 QMT 返回整根
+#   日线, 索引 146 = 73x2, 一半白做)。本机实测否决了该方向:
+#     生产转dict 39.7 ms/只, 本机全量装配 0.078 ms/只 -> 差 507 倍;
+#     跨 COM 取列占 99.05%, 本地装配只占 0.95%; 裁行动得了 0.47%,
+#     而 df.loc 本身要付 0.12% -> 净收益约 0.4%(190 秒解析省 0.8 秒)。
+#   为 0.8 秒动每只票都调用的核心函数不划算, 已撤销。下面断言锁定这个结论。
+chk("V2.6.134 已撤销 keep_from(_df_to_rows 回到单参签名)",
+    "def _df_to_rows(df):" in _body
+    and "def _bars_to_dict(df):" in _body)
+chk("V2.6.134 全文无 keep_from 残留(含注释)", "keep_from" not in _body)
+chk("V2.6.134 解析循环未传 _start 给 _bars_to_dict",
+    "_bars3 = _bars_to_dict(_raw3)" in _body
+    and "_bars_to_dict(_raw3, _start)" not in _body)
+chk("V2.6.134 落盘扫描计数 _n_scanned 在循环外初始化",
+    "_n_scanned = 0" in _body)
+chk("V2.6.134 落盘截断标记 _hit_cap 在循环外初始化",
+    "_hit_cap = False" in _body)
+chk("V2.6.134 落盘截断标记在主 for 内被置 True",
+    "_hit_cap = True" in _body)
+chk("V2.6.134 扫描计数 _n_scanned 在 break 之后自增(否则被截断那只数不到)",
+    "_n_scanned += 1" in _body
+    and _body.index("_hit_cap = True") < _body.index("_n_scanned += 1"))
+chk("V2.6.134 落盘截断只加诊断不改 3 秒上限(上限语义未变)",
+    "(time.time() - _t0) > 3.0" in _body)
+chk("V2.6.134 截断标注包含已扫/总数/已用秒(能自证)",
+    "3秒截断: 已扫%d/%d只 已用%.1f秒" in _body)
+chk("V2.6.134 截断标注拼在 _tail 上(与既有说明串同一出口)",
+    "_tail += (' [3秒截断: 已扫%d/%d只 已用%.1f秒]'" in _body)
+chk("V2.6.134 未新增模块级大写常量(参数指纹零漂移)",
+    "KEEP_FROM" not in _body and "HIT_CAP" not in _body
+    and "N_SCANNED" not in _body)
+chk("V2.6.134 取数窗口仍为 110(本版未动窗口)",
+    "        _sent_backfill_days = 110\r\n" in _body)
+chk("V2.6.134 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# ---- V2.6.135: log_guard 对照实验收口 + 探针口径分离 + 卡死误报修复 ----
+# "旧文案已删除" 类断言必须先剔注释行: 本版新增的解释性注释里会引用旧文案
+# 原串(说明"旧的是怎么写的"), 直接用 not in _body 会被自己的注释抓成 FAIL。
+_body_code = "\n".join([_ln for _ln in _body.split("\n")
+                         if not _ln.lstrip().startswith("#")])
+# 背景(2026-10-20 21:28 那轮 V2.6.134 实测):
+#   把 _lg_on 停用做对照实验后, 「单次最长」不是消失, 而是从 10.0009 秒变成
+#   29.9999 秒 —— 30 秒正是 timer_poll 的 CHECK_INTERVAL, 而 log_guard 是 10 秒。
+#   冻结时长跟着「当前还活着的那个定时器」走 => 病灶在 run_time 回调机制本身,
+#   不在任何回调的业务逻辑里。停用反而更糟, 故恢复启用。
+chk("V2.6.135 log_guard 已恢复启用(_lg_on = True)", "_lg_on = True" in _body)
+chk("V2.6.135 旧的 _lg_on = False 已消失",
+    "_lg_on = False      # V2.6.133" not in _body)
+chk("V2.6.135 停用分支文案已改成「实测无效, 仅保留作应急开关」",
+    "V2.6.134 已实测证实停用无效" in _body)
+chk("V2.6.135 log_guard 仍注册 10 秒节拍(未改周期)",
+    "ContextInfo.run_time('log_guard', '10nSecond'" in _body)
+
+# 探针口径: 旧口径把少数几次整块冻结摊到每一次采样上, 算出「598.4 倍」。
+# 拆开看是 86 次正常采样 0.0043 秒/次(基线 1.95 倍) + 4 次大冻结 118.13 秒。
+chk("V2.6.135 新增 _pb2_slow_sum 冻结合计(初始化)",
+    "_pb2_slow_sum = 0.0" in _body)
+chk("V2.6.135 _pb2_slow_sum 在 if _pb2_dt >= 1.0 体内累加",
+    "_pb2_slow_sum += _pb2_dt" in _body
+    and _body.index("_pb2_slow_sum = 0.0") < _body.index("_pb2_slow_sum += _pb2_dt"))
+chk("V2.6.135 新增 _pb2_frz_sh 冻结占解析百分比",
+    "_pb2_frz_sh = ((_pb2_slow_sum / _dt_par * 100.0)" in _body)
+chk("V2.6.135 输出已分离「冻结N次/合计秒/占比」",
+    "冻结%d次 合计%.1f秒=解析%.1f%%" in _body)
+chk("V2.6.135 输出已分离「正常N次均摊/基线倍数」",
+    "正常%d次 均摊%.4f秒/次=本机基线的%.2f倍" in _body)
+chk("V2.6.135 输出保留旧均摊口径作对照(标注会高估)",
+    "旧均摊口径%.4f秒/次" in _body)
+
+# 相位: %10 无法区分 10/20/30 秒周期(30 秒在 %10 下余数同样恒定, 集中度仍 100%)
+chk("V2.6.135 新增 30 秒模相位统计 _pb2_slow30",
+    "_pb2_slow30 = {}" in _body
+    and "_pb2_slow30[_pb2_k30] = _pb2_slow30.get(_pb2_k30, 0) + 1" in _body)
+chk("V2.6.135 30 秒模余数按 % 30 计算",
+    "_pb2_k30 = int(_pb2_t1) % 30" in _body)
+chk("V2.6.135 输出新增「卡顿落点相位(30秒模)」",
+    "卡顿落点相位(30秒模)" in _body)
+
+# 间隔判读: 旧版把三种可能写成固定模板, 实测 120,91,30 时仍打「恒为10=10秒节拍」
+chk("V2.6.135 间隔判读已改为自动判读 _pb2_beat",
+    "_pb2_beat = '无法判定'" in _body)
+chk("V2.6.135 判读分支齐全(恒定/30秒倍/10秒倍/参差)",
+    "恒定约%d秒 -> 单一定时器节拍" in _body
+    and "全部≈30秒整数倍 -> timer_poll(30秒)节拍" in _body
+    and "全部≈10秒整数倍 -> 10秒为最小节拍单位" in _body
+    and "参差 -> 外部事件, 与定时器节拍无关" in _body)
+chk("V2.6.135 旧固定模板「相邻差恒为10」已从代码与注释中删除",
+    "相邻差恒为10=10秒节拍" not in _body)
+chk("V2.6.135 30 秒分支判在 10 秒分支之前(顺序不能反)",
+    _body.index("全部≈30秒整数倍") < _body.index("全部≈10秒整数倍"))
+
+# 卡死误报: 历史 6 次报警 0 次真卡死, 真实完成耗时 498/527/540/570 秒,
+# 而阈值 360 秒比最慢的一次还低 210 秒 -> 必然误报。
+chk("V2.6.135 卡死阈值已从 360 提到 900 秒",
+    "_age > 900.0" in _body and "_age > 360.0" not in _body)
+chk("V2.6.135 旧错误文案「预算(180秒)的2倍」已删除",
+    "预算(180秒)的2倍" not in _body)
+chk("V2.6.135 不再声称「将全天中性」(它只跳过本轮)",
+    "将全天中性" not in _body_code)
+chk("V2.6.135 新文案说明「后续轮次仍会继续尝试」",
+    "后续轮次仍会继续尝试" in _body)
+
+# 本版不新增任何模块级大写常量 -> 参数指纹零漂移(已用 A/B 对照验证)
+chk("V2.6.135 未新增模块级大写常量(参数指纹零漂移)",
+    "PB2_SLOW_SUM" not in _body and "PB2_SLOW30" not in _body
+    and "PB2_BEAT" not in _body and "LG_ON" not in _body)
+chk("V2.6.135 取数窗口仍为 110(本版未动窗口)",
+    "        _sent_backfill_days = 110\r\n" in _body)
+chk("V2.6.135 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# ---- V2.6.136: 累积池跨代恢复 (gen 不等不再丢弃) ----
+# 根因: _sent_acc_load() 拿 _GEN_STATE['id'](启动时刻) 判累积池有效期。
+#   世代号的本职是 _gen_superseded() 判"本线程是否已被新代取代", 语义误用。
+#   实测代价: 21:39:45 落盘 5098只(97.6%), 21:40:12 就丢弃, 从 0 重攒约 30 分钟。
+chk("V2.6.136 版本号行已升到 V2.6.136",
+    "# 版本号: V2.6.136" in _body)
+chk("V2.6.136 旧的 return 0, '换代丢弃 已从代码中删除",
+    "return 0, '换代丢弃" not in _body_code)
+chk("V2.6.136 跨代恢复说明串已加入代码",
+    "'(跨代恢复: 盘内gen=%.1f, 本代gen=%.1f)'" in _body_code)
+chk("V2.6.136 _xgen 初始化在条件之前",
+    "_xgen = ''" in _body_code)
+chk("V2.6.136 gen 校验条件保留(仅改为只设说明串, 不 return)",
+    "if _gen_now > 0.0 and abs(_gen - _gen_now) > 1e-6:" in _body_code)
+chk("V2.6.136 返回说明串已带 _xgen(5 个实参)",
+    "_day, _gen, _xgen" in _body_code)
+chk("V2.6.136 _SENT_ACC.update 的 gen 已绑定本代",
+    "'gen': (_gen_now if _gen_now > 0.0 else _gen)" in _body_code)
+# 三道原有校验必须原样保留(换日 / 字段口径 / 结构版本)
+chk("V2.6.136 换日丢弃仍保留", "return 0, '换日丢弃(盘内%s, 今日%s)'" in _body_code)
+chk("V2.6.136 字段口径校验仍保留",
+    "return 0, '字段口径不符(%s)' % _d.get('cols')" in _body_code)
+chk("V2.6.136 v=2 日期池为空校验仍保留",
+    "return 0, '日期池为空(v=2)'" in _body_code)
+chk("V2.6.136 盘内样本为空校验仍保留",
+    "return 0, '盘内样本为空'" in _body_code)
+# docstring 必须与实现一致(旧文写"世代不符一律丢弃")
+chk("V2.6.136 旧 docstring「日期或世代不符一律丢弃」已删除",
+    "日期或世代不符一律丢弃" not in _body)
+chk("V2.6.136 新 docstring 明示「世代不同不再丢弃」",
+    "世代不同【不再丢弃】" in _body)
+chk("V2.6.136 未新增模块级大写常量(参数指纹零漂移)",
+    "XGEN" not in _body and "GEN_NOW" not in _body)
+chk("V2.6.136 止损单仍为 0(铁律)", _body.count("stop_order") == 0)
+
+# AST 层校验: _xgen 的赋值必须在 gen 条件体内, 且 return 用它在同函数
+import ast as _ast136
+_t136 = _ast136.parse(text)          # 必须用原文, lines 已按 CRLF 拆开
+_fn136 = None
+for _nd in _t136.body:
+    if isinstance(_nd, _ast136.FunctionDef) and _nd.name == "_sent_acc_load":
+        _fn136 = _nd
+        break
+chk("V2.6.136 找到 _sent_acc_load 函数", _fn136 is not None)
+_xgen_lines = []
+if _fn136 is not None:
+    for _nd in _ast136.walk(_fn136):
+        if (isinstance(_nd, _ast136.Assign) and len(_nd.targets) == 1
+                and isinstance(_nd.targets[0], _ast136.Name)
+                and _nd.targets[0].id == "_xgen"):
+            _xgen_lines.append(_nd.lineno)
+chk("V2.6.136 _xgen 在函数内被赋值两次(初始化 + 跨代命中)", len(_xgen_lines) == 2,
+    "actual=%d" % len(_xgen_lines))
+chk("V2.6.136 有 return 语句引用 _xgen", _fn136 is not None and any(
+    isinstance(_nd, _ast136.Name) and _nd.id == "_xgen"
+    for _nd in _ast136.walk(_fn136)
+    if getattr(_nd, "lineno", 0) > (max(_xgen_lines) if _xgen_lines else 10 ** 9)))
+
+fails = [n for (n, c) in ok if not c]
+print("\n%d/%d PASS" % (len(ok) - len(fails), len(ok)))
+if fails:
+    print("FAILED: %s" % fails)
+    raise SystemExit(1)

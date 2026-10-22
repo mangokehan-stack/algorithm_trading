@@ -1,0 +1,259 @@
+V2.6.106 广发交易端手工部署操作单
+==============================================================================
+策略: 涨停缩量低吸 (zt_shrink_strategy_gbk.py)
+母版: 12949 行 / 771064 字节 / 参数指纹 8a4ab7e8 (与 V2.6.105 完全一致)
+
+广发交易端没有"导入"功能, QMT 内部引擎执行的是编辑器里的策略文档, 不读
+bin.x64 下的 .py。只能按下面区段在编辑器里逐段替换。
+
+【铁律】动手前先把编辑器里的原文整段复制到记事本存一份。QMT 无版本管理。
+【顺序】必须 0 -> 7 顺序做。第 1 步先加累积池, 后面各步才有 _SENT_ACC 可引用。
+【缩进】每段代码缩进已对齐, 粘贴后不要用编辑器自动格式化。
+
+------------------------------------------------------------------------------
+第 0 步: 升版本号 (改 1 行)
+------------------------------------------------------------------------------
+搜索: VERSION = 'V2.6.105'
+改成: VERSION = 'V2.6.106'
+
+------------------------------------------------------------------------------
+第 1 步: 新增累积池 —— 在 "SENT_STATE = {}" 那行下方空一行粘贴
+------------------------------------------------------------------------------
+搜索: SENT_STATE = {}
+粘贴(共 13 行, 紧跟 SENT_STATE = {} 那行后面):
+
+
+# V2.6.106(方案9): 情绪取数跨轮累积容器。
+#   病因(V2.6.103~105 三版都没治好): 110 秒预算在 17~21 秒/批的实盘速度下只能跑
+#   5~6 批 = 1500~1800 只, 覆盖 29%~34%。_cov_min() 在预算截断时要求的
+#   "零失败且已取>=480只"本身是能满足的; 真正卡死的是 SENT_COVERAGE_MIN=0.90 ——
+#   ratio 用的是"本轮取到 / 全市场", 单轮永远够不到 90%, 于是一直走
+#   _sent_use_last_good() 沿用上一次成功信号, 情绪被冻结。
+#   解法: 把"一次取全"改成"多轮拼全"。每轮只从还没取过的标的里继续取,
+#   已有数据直接复用不再调接口; 累积覆盖达到 SENT_COVERAGE_MIN 才出信号,
+#   否则挂起等下一轮。累积全天连续: 第一轮 34% + 第二轮 +34% = 68% + 第三轮 -> 100%。
+#   用**小写**模块级 dict, 不新增 UPPER_CASE 常量 —— 否则 _fp_keys() 会把它收进
+#   参数指纹, 使 verified_fp 失效(项目铁律)。
+_SENT_ACC = {'date': '', 'md': {}, 'ok': 0, 'fail': 0, 'retry': 0,
+             'rounds': 0, 'pend_rounds': 0}
+
+------------------------------------------------------------------------------
+第 2 步: _sent_fetch_md_batch (3 处)
+------------------------------------------------------------------------------
+2-1 搜索函数定义行:
+    旧: def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth):
+    新: def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc=None):
+
+2-2 搜索 "        return _md" (该函数内唯一一处), 在它上面插入 5 行:
+
+        if acc is not None and _n > 0:
+            for _c in codes:
+                if _md.get(_c) is not None:
+                    acc[_c] = _md[_c]
+
+2-3 搜索以 "_out.update(_sent_fetch_md_batch(" 开头的那行递归调用,
+    把行尾 "depth + 1))" 改成 "depth + 1, acc))"
+
+------------------------------------------------------------------------------
+第 3 步: _sent_fetch_sync 主线改累积遍历 (6 处)
+------------------------------------------------------------------------------
+3-1 搜索 "_abort = False", 在它上面插入 12 行:
+
+        #   _acc_md  : 累积池(当天已取到的 {code: raw}), 每轮只增不减
+        #   _acc_cnt : 本轮开始前已累积到的只数
+        #   _todo    : 本轮真正要取的 = 全市场 - 已累积(已取到的绝不再调接口)
+        if _SENT_ACC.get('date') != str(getattr(G, 'today', '') or ''):
+            _SENT_ACC.update({'date': str(getattr(G, 'today', '') or ''),
+                              'md': {}, 'ok': 0, 'fail': 0, 'retry': 0,
+                              'rounds': 0, 'pend_rounds': 0})
+        _acc_md = _SENT_ACC['md']
+        _acc_cnt = len(_acc_md)
+        _todo = [_c for _c in _stocks if _c not in _acc_md]
+        _acc_new = 0
+
+3-2 搜索 "for _i in range(0, len(_stocks), 300):"
+    改成 "for _i in range(0, len(_todo), 300):"
+
+3-3 搜索 "_batch = _stocks[_i:_i + 300]"
+    改成 "_batch = _todo[_i:_i + 300]"
+
+3-4 搜索 "_ok_before = _box[0]" (分批循环内), 紧接其后插入一行:
+                _acc_before = len(_acc_md)
+
+3-5 搜索 "_md = _sent_fetch_md_batch(C, _batch, _fields, _start, _cnt, _box, 0)"
+    整行改成两行(第二行 27 个空格, 对齐到左括号内侧):
+                _md = _sent_fetch_md_batch(C, _batch, _fields, _start, _cnt, _box, 0,
+                           _acc_md)
+
+3-6 搜索 "_nb_ok += 1" (分批循环内), 在它上面插入一行:
+                _acc_new += (len(_acc_md) - _acc_before)
+
+------------------------------------------------------------------------------
+第 4 步: 收尾改累积口径 (4 处)
+------------------------------------------------------------------------------
+4-1 在 "SENT_STATE['cover'] = _cov" 这一行上面插入 10 行:
+
+        #   旧口径下预算截断必然 ratio < 0.90, 于是每轮都 _sent_use_last_good(),
+        #   信号永久冻结。新口径下只要'跨轮累积'够 90% 就出信号, 单轮只往前推一截。
+        _acc_cnt = len(_acc_md)
+        _acc_ratio = (float(_acc_cnt) / float(len(_stocks))) if _stocks else 0.0
+        _cov['round_ok'] = int(_cov['ok'])      # 本轮新取到(保留原值, 供日志对照)
+        _cov['acc_ok'] = int(_acc_cnt)          # 全天累积到手
+        _cov['acc_ratio'] = _acc_ratio
+        _cov['rounds'] = int(_SENT_ACC.get('rounds') or 0) + 1
+        _SENT_ACC['rounds'] = _cov['rounds']
+
+4-2 搜索 "if not _stats:"
+    改成 "if not _stats and _acc_cnt <= 0:"
+
+4-3 找到含有 "统计口径改用累积池重算" 那段注释的头一行,
+    从它开始到 rows = [] 上方为止, 共 26 行 —— 在 rows = [] 这行【上方】插入:
+
+        # V2.6.106(方案9): 统计口径改用累积池重算。
+        #   本轮只取了一部分标的, 若用本轮 _stats 组装, advance/decline/limit_up 的
+        #   **分母**每轮都不同(同一交易日两次信号指标不一致), 比'冻结'更坏。
+        #   改为用累积到手的全部标的重算一次, 分母随累积增长但口径统一。
+        _stats_all = {}
+        for _s3, _raw3 in _acc_md.items():
+            _th3 = _lu_th(_s3)
+            for _d3, _row3 in _bars_to_dict(_raw3).items():
+                if _d3 < _start:
+                    continue
+                _c3 = _f((_row3 or {}).get('close'))
+                _p3 = _f((_row3 or {}).get('preClose'))
+                if _c3 <= 0 or _p3 <= 0:
+                    continue
+                _pct3 = _c3 / _p3 - 1.0
+                _st3 = _stats_all.get(_d3)
+                if _st3 is None:
+                    _st3 = _stats_all[_d3] = [0, 0, 0]
+                if _pct3 > 0:
+                    _st3[0] += 1
+                elif _pct3 < 0:
+                    _st3[1] += 1
+                if _pct3 >= _th3:
+                    _st3[2] += 1
+        if _stats_all:
+
+    插完后的顺序应该是: [上面这段] -> rows = [] -> for _d in sorted(...)
+
+4-4 搜索整行:
+    _ratio_pct = _cov['ratio'] * 100.0 if _cov['ratio'] is not None else 0.0
+  整行替换为 1 行:
+        _ratio_pct = _acc_ratio * 100.0      # V2.6.106: 展示累积覆盖率(原为本轮覆盖率)
+
+------------------------------------------------------------------------------
+第 5 步: 应用侧覆盖判定 (_sent_apply_rows)
+------------------------------------------------------------------------------
+搜索 "        _min_cov = SENT_COVERAGE_MIN", 从这行开始往下选中到随后的
+"            return" 为止 —— 共 23 行(中间含 if _cov.get(budget_hit) 那三行):
+
+    编辑器里这 23 行的旧内容应该是:
+
+            _min_cov = SENT_COVERAGE_MIN
+            # ---- V2.6.106(方案9): 覆盖口径从'本轮'改为'跨轮累积' ----
+            #   旧逻辑(budget_hit 时 fail==0 且 ok>=480 即放行)已被累积机制取代:
+            #   每轮只从'还没取到的'里取, 多轮自然拼满, 不必再为预算截断单开例外。
+            #   累积达到 SENT_COVERAGE_MIN -> 出信号; 未达到 -> 挂起(沿用上次成功信号),
+            #   等下一轮继续拼。既不冻结, 也不用 34% 的偏样本去做买卖决策。
+            _acc_r = _cov.get('acc_ratio')
+            try:
+                _acc_r = float(_acc_r) if _acc_r is not None else None
+            except Exception:
+                _acc_r = None
+            if _acc_r is not None:
+                _ratio = _acc_r
+            if _ratio is not None and _ratio < _min_cov:
+                _SENT_ACC['pend_rounds'] = int(_SENT_ACC.get('pend_rounds') or 0) + 1
+                SENT_STATE['acc_pending'] = True
+                _sent_use_last_good(
+                    '累积覆盖率%.1f%%(<%.0f%%下限; 本轮新取%d只/累积%d只/全市场%d只/失败%d只/重试%d次/第%d轮)'
+                    % (_ratio * 100.0, _min_cov * 100.0,
+                       int(_cov.get('round_ok') or 0), int(_cov.get('acc_ok') or 0),
+                       int(_cov.get('req') or 0), int(_cov.get('fail') or 0),
+                       int(_cov.get('retry') or 0), int(_cov.get('rounds') or 0)))
+                return
+
+整段删掉, 换成下面 24 行:
+
+        _min_cov = SENT_COVERAGE_MIN
+        # ---- V2.6.106(方案9): 覆盖口径从'本轮'改为'跨轮累积' ----
+        #   旧逻辑(budget_hit 时 fail==0 且 ok>=480 即放行)已被累积机制取代:
+        #   每轮只从'还没取到的'里取, 多轮自然拼满, 不必再为预算截断单开例外。
+        #   累积达到 SENT_COVERAGE_MIN -> 出信号; 未达到 -> 挂起(沿用上次成功信号),
+        #   等下一轮继续拼。既不冻结, 也不用 34% 的偏样本去做买卖决策。
+        _acc_r = _cov.get('acc_ratio')
+        try:
+            _acc_r = float(_acc_r) if _acc_r is not None else None
+        except Exception:
+            _acc_r = None
+        if _acc_r is not None:
+            _ratio = _acc_r
+        if _ratio is not None and _ratio < _min_cov:
+            _SENT_ACC['pend_rounds'] = int(_SENT_ACC.get('pend_rounds') or 0) + 1
+            SENT_STATE['acc_pending'] = True
+            _sent_use_last_good(
+                '累积覆盖率%.1f%%(<%.0f%%下限; 本轮新取%d只/累积%d只/全市场%d只/失败%d只/重试%d次/第%d轮)'
+                % (_ratio * 100.0, _min_cov * 100.0,
+                   int(_cov.get('round_ok') or 0), int(_cov.get('acc_ok') or 0),
+                   int(_cov.get('req') or 0), int(_cov.get('fail') or 0),
+                   int(_cov.get('retry') or 0), int(_cov.get('rounds') or 0)))
+            return
+
+------------------------------------------------------------------------------
+第 6 步: 取数侧覆盖判定改累积口径 (4 处)
+------------------------------------------------------------------------------
+6-1 搜索 "        def _cov_min(_cv, _bh):", 连同后面 5 行一起选中(共 6 行),
+    整段删除 —— 累积机制下这个预算特例函数已无意义。
+
+6-2 搜索 "        _min_cov = _cov_min(_cov, _budget_hit)" —— 整行删除。
+
+6-3 搜索 "if _budget_hit and _min_cov <= 0.0:", 连同后面 4 行(共 5 行)整段删掉,
+    换成下面 3 行:
+
+        if _budget_hit and _acc_ratio >= SENT_COVERAGE_MIN:
+            _sent_wlog('[提示] 本轮触发取数总预算, 已取%d只(累积覆盖%.1f%%), 累积已达标: 采用本轮累积实测值'
+                       % (int(_cov.get('ok') or 0), _acc_ratio * 100.0))
+
+6-4 搜索 "if _acc_ratio < SENT_COVERAGE_MIN:", 连同后面 4 行(共 5 行)整段删掉,
+    旧的那段以 if _cov['ratio'] is not None and _cov['ratio'] < _min_cov: 开头。
+    换成下面 4 行:
+
+        if _acc_ratio < SENT_COVERAGE_MIN:
+            _sent_wlog('[告警] 累积覆盖率不足(%.1f%% < %.0f%%): 本轮不采用, 沿用上一次成功信号, 下一轮继续拼接(本轮新取%d只/累积%d只/全市场%d只)'
+                       % (_acc_ratio * 100.0, SENT_COVERAGE_MIN * 100.0,
+                          int(_cov.get('ok') or 0), int(_acc_cnt), int(len(_stocks))))
+
+------------------------------------------------------------------------------
+第 7 步: bootstrap 重置累积池
+------------------------------------------------------------------------------
+搜索 SENT_STATE['rows'] = [] 紧接 _SENTIMENT_READY = False 的那一处,
+在 SENT_STATE['rows'] = [] 这行【上方】插入 5 行:
+
+        SENT_STATE['acc_pending'] = False
+        # V2.6.106(方案9): 重启即清空累积池 —— 换日/换进程都从零开始拼
+        _SENT_ACC.update({'date': '', 'md': {}, 'ok': 0, 'fail': 0,
+                          'retry': 0, 'rounds': 0, 'pend_rounds': 0})
+
+==============================================================================
+部署窗口: 收盘后 15:00 之后 (最推荐)
+==============================================================================
+  收盘后 handlebar 完全空转; market_phase() 取 datetime.now() 系统真实钟点
+  必为 off_hours; step_day_init() 见 last_init_date==today 直接 return,
+  不重下 5226 只日线、不重跑选股 -> 下单风险为零, 且改错有时间改回。
+  禁止: 盘中 (market_phase=trading, 会真的调用 run_round 下单)。
+
+==============================================================================
+次日开盘验证清单 (09:31 起盯这几行)
+==============================================================================
+[1] [情绪] 内置通道取数完成: 请求5226只 成功17xx只(覆盖率33.x%) ...
+[2] [告警] 累积覆盖率不足(33.x% < 90.0%): 本轮不采用, 沿用上一次成功信号, 下一轮继续拼接
+[3] 约 6 分钟后 累积到 90% 以上 -> 出现 "信号刷新: 数据日=... sentiment=..."
+
+对照: 旧版(V2.6.105)全天永远停在 "行情覆盖率仅29.x%(<90%下限)", 一次信号也不出。
+新版若 3 轮内(约6分钟)出信号, 说明修复生效。
+
+若 6 轮后仍不出信号, 看日志里的"本轮新取%d只":
+  恒为 0  -> 累积池没生效(第 1 步粘贴失败, 或 _SENT_ACC 被写到函数内部)
+  恒定不变 -> 第 3 步 _todo 未改(仍在遍历 _stocks)
+==============================================================================

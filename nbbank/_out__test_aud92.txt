@@ -1,0 +1,37 @@
+[2026-10-22 00:36:59] 【状态落盘失败】文件=C:\Users\MANGOK~1\AppData\Local\Temp\_a92_lky3da_3\gf_native_multi_state.json 原因=state merge read failed: open:[Errno 2] No such file or directory: 'C:\\Users\\MANGOK~1\\AppData\\Local\\Temp\\_a92_lky3da_3\\gf_native_multi_state.json' | os.open:[Errno 2] No such file or directory: 'C:\\Users\\MANGOK~1\\AppData\\Local\\Temp\\_a92_lky3da_3\\gf_native_multi_state.json' | ctypes:CreateFileW被拒(GetLastError=2) | sub:subprocess通道已禁用(QMT内会阻塞主线程) —— 重启后该文件不会更新，持仓/加仓台账可能归零并触发重复开首仓；请检查该目录写入权限（本次运行内每个文件只提示一次）
+======================================================================
+  [PASS] A1 P1 读回校验改三通道 _read_file_bytes 
+  [PASS] A2 P1 不再用普通 open 读 tmp 
+  [PASS] A3 P1 读不出来=无法校验不否决（blob None 分支） 
+  [PASS] A4 P1 真坏 JSON 仍拦截告警 
+  [PASS] A5 P2 登记字典定义 
+  [PASS] A6 P2 成功登记 ok / 放弃登记 skip 
+  [PASS] A7 P2 save_state 见 skip 如实抛错 
+  [PASS] A8 P3 情绪日志按模式显示生效缩放 
+  [PASS] T1 合法JSON替换 | 替换判定 replaced=True
+  [PASS] T1 合法JSON替换 | 状态登记 got='ok' want='ok'
+  [PASS] T1 合法JSON替换 | 无告警 got=0 want=0
+  [PASS] T2 半截JSON拦截 | 替换判定 replaced=False
+  [PASS] T2 半截JSON拦截 | 状态登记 got='skip' want='skip'
+  [PASS] T2 半截JSON拦截 | 告警标签 got=['json_truncate'] want=['json_truncate']
+  [PASS] T3 非JSON直写 | 替换判定 replaced=True
+  [PASS] T3 非JSON直写 | 状态登记 got='ok' want='ok'
+  [PASS] T3 非JSON直写 | 无告警 got=0 want=0
+  [PASS] T4 空tmp放弃 | 替换判定 replaced=False
+  [PASS] T4 空tmp放弃 | 状态登记 got='skip' want='skip'
+  [PASS] T4 空tmp放弃 | 无告警 got=0 want=0
+  [PASS] T5 沙箱拦读不否决 | 替换判定 replaced=True
+  [PASS] T5 沙箱拦读不否决 | 状态登记 got='ok' want='ok'
+  [PASS] T5 沙箱拦读不否决 | 无告警 got=0 want=0
+  [PASS] T6 拦读下半截也放行 | 替换判定 replaced=True
+  [PASS] T6 拦读下半截也放行 | 状态登记 got='ok' want='ok'
+  [PASS] T6 拦读下半截也放行 | 无告警 got=0 want=0
+  [PASS] T7 守卫放弃时 save_state 返回 False got=False want=False
+  [PASS] T7 持久化降级置位 got=False want=False
+  [PASS] T7 失败告警发出 got=['save_state'] want=['save_state']
+  [FAIL] T8 恢复后 save_state 返回 True got=False want=True
+  [FAIL] T8 持久化降级复位 got=False want=True
+  [FAIL] T8 无新增告警 got=1 want=0
+  [FAIL] T8 状态文件真实落盘 
+======================================================================
+AUD92 专项：通过 29 / 33

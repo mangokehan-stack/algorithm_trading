@@ -1,0 +1,722 @@
+L2      EXPR    """ 涨停缩量低吸策略 (广发QMT策略交易端 内置Python框架版) ======================
+L247    IMPORT  import time, datetime, traceback, sys, os, json, csv, math, shutil, threading, random, re
+L250    ASSIGN  ACCOUNT_ID
+L254    ASSIGN  TRADE_MODE
+L259    ASSIGN  DRY_RUN
+L263    ASSIGN  SLIPPAGE_PCT
+L269    DEF     _slippage_for(price)
+L288    ASSIGN  STRATEGY_CASH_CAP
+L291    ASSIGN  LOG_TO_FILE
+L293    ASSIGN  LOG_FLUSH_INTERVAL
+L294    ASSIGN  LOG_FLUSH_MAX
+L295    ASSIGN  EMERGENCY_MODE
+L299    ASSIGN  EMERGENCY_FILE
+L300    ASSIGN  EMERGENCY_FILE_REFRESH_SEC
+L304    ASSIGN  SELL_CTX_SETTLE_GRACE_SEC
+L307    ASSIGN  CSV_ENCODING
+L310    ASSIGN  TARGET_BUY_AMOUNT
+L311    ASSIGN  FIXED_BUY_VOL
+L312    ASSIGN  MAX_DAILY_PICKS
+L313    ASSIGN  DAILY_BUY_PICKS
+L314    ASSIGN  MAX_DAILY_BUYS_LIVE
+L315    ASSIGN  MAX_DAILY_BUYS_PAPER
+L316    ASSIGN  BUY_BLOCK_TAG
+L317    ASSIGN  EXT_MERGE_INTERVAL_SEC
+L323    ASSIGN  MAX_DAILY_SELLS_LIVE
+L324    ASSIGN  MAX_DAILY_SELLS_PAPER
+L327    ASSIGN  MAX_POSITIONS
+L329    ASSIGN  MIN_BUY_AMOUNT
+L330    ASSIGN  DYN_PROFIT_FEE
+L331    ASSIGN  MIN_DAILY_AMOUNT
+L337    ASSIGN  DAILY_VOL_UNIT
+L338    ASSIGN  AUTO_VOL_UNIT
+L339    ASSIGN  TICK_VOL_UNIT
+L343    ASSIGN  TICK_UNIT_BLOCK_DAYS
+L344    ASSIGN  TICK_UNIT_ACK
+L348    ASSIGN  BUY_ORDER_TIMEOUT_SEC
+L349    ASSIGN  BUY_ORDER_ERR_MAX
+L352    ASSIGN  PYRAMID_MIN_DAY_MINUTES
+L353    ASSIGN  PYRAMID_MIN_DAY_BARS
+L354    ASSIGN  ORDER_CB_DEDUP_SEC
+L355    ASSIGN  BUY_ORDER_RETRIES
+L357    ASSIGN  SELL_ORDER_TIMEOUT_SEC
+L358    ASSIGN  SELL_ORDER_ERR_MAX
+L359    ASSIGN  SELL_ORDER_RETRIES
+L360    ASSIGN  CANCEL_CONFIRM_GRACE_SEC
+L361    ASSIGN  PRICE_CAGE_PCT
+L362    ASSIGN  LIMIT_BAND_PCT
+L366    ASSIGN  LIMIT_BAND_BSE
+L367    ASSIGN  LIMIT_BAND_KEB
+L368    ASSIGN  LIMIT_BAND_ST
+L369    ASSIGN  PORTFOLIO_FUSE_LOSS
+L372    ASSIGN  FUSE_PAUSE_TRDAYS
+L373    ASSIGN  FUSE_AUTO_RESUME_DAYS
+L378    ASSIGN  PORTFOLIO_HARD_DD_PCT
+L379    ASSIGN  STATE_BAK_KEEP
+L380    ASSIGN  REBUY_GAP_TRDAYS
+L381    ASSIGN  LOOKBACK_TRDAYS
+L382    ASSIGN  ONLY_SINGLE_ZT
+L383    ASSIGN  ZT_VOL_RATIO_MIN
+L384    ASSIGN  BASE_VOL_RATIO_MIN
+L385    ASSIGN  BUY_WINDOW_START
+L386    ASSIGN  BUY_WINDOW_END
+L387    ASSIGN  SHRINK_BUY_RATIO
+L391    ASSIGN  BUY_TOL
+L392    ASSIGN  EXPAND_SELL_RATIO
+L397    ASSIGN  SELL_TOL
+L398    ASSIGN  ZT_TURNOVER_MIN
+L399    ASSIGN  ZT_TURNOVER_MAX
+L400    ASSIGN  SELL_TURNOVER_TOP
+L401    ASSIGN  MARKET_TIDE_CHECK
+L402    ASSIGN  MARKET_TIDE_INDEX
+L403    ASSIGN  MARKET_TIDE_LOOKBACK
+L404    ASSIGN  MARKET_TIDE_DROP_PCT
+L405    ASSIGN  EARLY_SELL_VOL_MULT
+L406    ASSIGN  EARLY_SELL_BLOCK_MIN
+L407    ASSIGN  EARLY_SELL_END_MIN
+L408    ASSIGN  SELL_GIVEUP_RETRY_SEC
+L409    ASSIGN  MARKET_TIDE_ERR_BLOCK_N
+L410    ASSIGN  MARKET_TIDE_RETRY_SEC
+L418    ASSIGN  STALL_CONFIRM_ON
+L419    ASSIGN  STALL_MAX_GAIN_PCT
+L420    ASSIGN  STALL_NEWHIGH_DAYS
+L421    ASSIGN  STALL_NEWHIGH_GAP
+L422    ASSIGN  SELL_MIN_PROFIT_PCT
+L423    ASSIGN  NEVER_STOP_LOSS
+L427    ASSIGN  MAX_HOLD_TRDAYS
+L428    ASSIGN  BUY_MIN_ELAPSED_MIN
+L429    ASSIGN  SELL_MIN_ELAPSED_MIN
+L430    ASSIGN  MAX_PULLBACK_FROM_ZT
+L431    ASSIGN  MAX_CHASE_OVER_ZT
+L432    ASSIGN  EXCLUDE_ST
+L433    ASSIGN  EXCLUDE_ST_HIST
+L434    ASSIGN  EXCLUDE_KCB
+L435    ASSIGN  EXCLUDE_CYB
+L438    ASSIGN  VERSION
+L439    ASSIGN  CHECK_INTERVAL
+L440    ASSIGN  HEARTBEAT_LOG_SEC
+L441    ASSIGN  HOURLY_REASON_LOG_SEC
+L445    ASSIGN  HB_PNL_TRIGGER_PCT
+L448    ASSIGN  CAL_RETRY_SEC
+L450    ASSIGN  SESSION1_START
+L451    ASSIGN  SESSION1_END
+L452    ASSIGN  TICK_STALE_MAX_SEC
+L453    ASSIGN  VOL_COMPLETE_MIN_RATIO
+L457    ASSIGN  VOL_IMPLAUSIBLE_MIN_RATIO
+L458    ASSIGN  BACKFILL_1M_ENABLE
+L459    ASSIGN  BACKFILL_1M_MIN_INTERVAL
+L460    ASSIGN  BACKFILL_1M_MIN_BARS
+L461    ASSIGN  BACKFILL_1M_TRIGGER_RATIO
+L464    ASSIGN  SESSION2_START
+L465    ASSIGN  SESSION2_END
+L466    ASSIGN  PHASE_NAME
+L468    ASSIGN  HISTORY_BARS
+L469    ASSIGN  MIN_HISTORY_BARS
+L470    ASSIGN  DOWNLOAD_CHUNK
+L471    ASSIGN  DOWNLOAD_START_DAYS
+L472    ASSIGN  RESCREEN_INTERVAL
+L473    ASSIGN  MIN_UNIVERSE_FOR_SCREEN
+L474    ASSIGN  MIN_UNIVERSE_RATIO
+L482    ASSIGN  NEW_BUY_DATA_BLOCK
+L483    ASSIGN  DATA_BLOCK_RATIO
+L484    ASSIGN  STALE_BLOCK_ROUNDS
+L485    ASSIGN  DATA_ALERT_PUSH
+L489    ASSIGN  MARKET_CAP_FILTER_ON
+L490    ASSIGN  MARKET_CAP_MIN_YI
+L491    ASSIGN  MARKET_CAP_MAX_YI
+L492    ASSIGN  MARKET_CAP_DEGRADE
+L493    ASSIGN  MARKET_CAP_CACHE_SEC
+L500    ASSIGN  PARAM_VERIFY_ENFORCE
+L501    ASSIGN  DOWNLOAD_TIME_BUDGET_SEC
+L505    ASSIGN  VOL_PROJ_MODE
+L511    ASSIGN  VOL_PROJ_POWER
+L513    ASSIGN  POS_EMPTY_CONFIRM_ROUNDS
+L519    ASSIGN  STRATEGY_CAPITAL
+L520    ASSIGN  DYN_SIZING_ON
+L521    ASSIGN  SIZE_EQUITY_MODE
+L523    ASSIGN  SIZE_EQUITY_INCLUDE_HANDOFF
+L527    ASSIGN  SINGLE_POSITION_MODE
+L530    ASSIGN  RISK_PCT
+L536    ASSIGN  DEGRADE_TOLERANCE
+L539    ASSIGN  ATR_PERIOD
+L540    ASSIGN  ATR_STOP_MULT
+L541    ASSIGN  ATR_STOP_MAX
+L542    ASSIGN  ATR_PCT_MAX
+L543    ASSIGN  ATR_BARS
+L544    ASSIGN  MAX_POS_VALUE_PCT
+L545    ASSIGN  MAX_TOTAL_VALUE_PCT
+L546    ASSIGN  MAX_DAILY_SWING_PCT
+L547    ASSIGN  MAX_POS_VALUE_ABS
+L549    ASSIGN  CASH_USE_PCT
+L550    ASSIGN  LOT_SIZE
+L553    ASSIGN  RUN_ROUND_GUARD_SEC
+L559    ASSIGN  SIM_FILL_PROB
+L565    ASSIGN  SIM_DRY_FILL_PROB
+L571    ASSIGN  SIM_PARTIAL_FILL_ON
+L572    ASSIGN  SIM_PARTIAL_FILL_MIN
+L573    ASSIGN  SIM_PARTIAL_FILL_MAX
+L574    ASSIGN  STOP_SLIPPAGE_BUF
+L576    ASSIGN  DAILY_LOSS_ALERT_PCT
+L577    ASSIGN  SIZING_VALUE_ALERT_MULT
+L578    ASSIGN  PROFIT_LOCK_FEE_MULT
+L579    ASSIGN  PROFIT_LOCK_MIN_PCT
+L580    ASSIGN  PROFIT_LOCK_STRICT
+L581    ASSIGN  COOLDOWN_TRDAYS
+L582    ASSIGN  CONSEC_LOSS_PAUSE
+L583    ASSIGN  LOSS_PAUSE_TRDAYS
+L587    ASSIGN  PYRAMID_ON
+L588    ASSIGN  PYRAMID_SPLITS
+L589    ASSIGN  PYRAMID_RATIOS
+L590    ASSIGN  PYRAMID_HIGH_ZONE_PCT
+L591    ASSIGN  PYRAMID_MIN_GAP_MIN
+L592    ASSIGN  PYRAMID_MAX_PER_DAY
+L593    ASSIGN  PYRAMID_ADD_MAX_UP_PCT
+L594    ASSIGN  PYRAMID_MAX_WAIT_TRDAYS
+L595    ASSIGN  PYRAMID_EXPIRE_MODE
+L603    ASSIGN  TRAP_ALERT_ON
+L604    ASSIGN  TRAP_LOSS_PCT
+L605    ASSIGN  TRAP_LOSS_AMT_PCT
+L606    ASSIGN  TRAP_HOLD_TRDAYS
+L608    ASSIGN  TRAP_DEEP_LOSS_PCT
+L609    ASSIGN  TRAP_DEEP_MIN_TRDAYS
+L610    ASSIGN  TRAP_REBOUND_PCT
+L611    ASSIGN  TRAP_EXIT_NEAR_PCT
+L612    ASSIGN  TRAP_ALERT_COOLDOWN_TRDAYS
+L613    ASSIGN  TRAP_MAX_ALERTS
+L614    ASSIGN  TRAP_AUTO_HANDOFF
+L615    ASSIGN  TRAP_EXCLUDE_FROM_PNL
+L616    ASSIGN  TRAP_UNBAN_ON_EXIT
+L617    ASSIGN  TRAP_NOTIFY_WEBHOOK
+L618    ASSIGN  TRAP_TAG
+L619    ASSIGN  MANUAL_ALERT_FILE
+L622    ASSIGN  RISK_CHECK_ON
+L623    ASSIGN  RISK_MIN_PRICE
+L624    ASSIGN  RISK_MAX_DROP_7D
+L625    ASSIGN  RISK_MAX_DROP_3D
+L626    ASSIGN  RISK_MAX_DROP_5D
+L627    ASSIGN  RISK_LOSS_CHECK
+L632    ASSIGN  RISK_LOSS_KEEP_RECORDS
+L633    ASSIGN  RISK_LOSS_OUTPUT_LIMIT
+L634    ASSIGN  RISK_LOSS_MISSING_DEGRADE
+L637    ASSIGN  RISK_LOSS_PROBE_N
+L638    ASSIGN  RISK_LOSS_AUTO_DOWNLOAD
+L640    ASSIGN  RISK_LOSS_RECHECK_SEC
+L641    ASSIGN  PENDING_SETTLE_MAX_DAYS
+L645    ASSIGN  RISK_LOSS_ALERT_PUSH
+L648    ASSIGN  BLACKLIST_FILE
+L649    ASSIGN  ST_HIST_FILE
+L651    ASSIGN  RISK_EXCLUDE_ON
+L653    ASSIGN  RISK_EXCLUDE_FILE
+L654    ASSIGN  RISK_EXCLUDE_MAX_AGE_DAYS
+L659    ASSIGN  MA10_HOLD_ON
+L660    ASSIGN  MA10_HOLD_BENCH
+L662    ASSIGN  MA10_HOLD_FROM
+L663    ASSIGN  MA10_MIN_BARS
+L673    ASSIGN  ZT_LOW_HOLD_ON
+L674    ASSIGN  CONFIRM_ENTRY_ON
+L680    ASSIGN  CONFIRM_YIN_VOL_RATIO
+L681    ASSIGN  CONFIRM_YANG_VOL_RATIO
+L682    ASSIGN  CONFIRM_BREAK_MAX_DAYS
+L683    ASSIGN  MA5_RECLAIM_ON
+L689    ASSIGN  MA5_RECLAIM_SHRINK_RATIO
+L690    ASSIGN  MA5_RECLAIM_MAX_DAYS
+L697    ASSIGN  HOT_SECTOR_ON
+L698    ASSIGN  HOT_SECTOR_TOPN
+L700    ASSIGN  HOT_SECTOR_ZT_MIN
+L701    ASSIGN  HOT_SECTOR_AUTOFIX_ON_FAIL
+L702    ASSIGN  HOT_SECTOR_FAIL_HARD
+L708    ASSIGN  RUN_LOG_FILE
+L713    ASSIGN  NOTIFY_WEBHOOK
+L714    ASSIGN  NOTIFY_ALLOWED_HOSTS
+L715    ASSIGN  NOTIFY_TIMEOUT
+L716    ASSIGN  LOG_ENCODING
+L717    ASSIGN  LOG_FILE_ENCODING
+L718    ASSIGN  STATE_FILE
+L722    ASSIGN  NAMES_CACHE_FLUSH_SEC
+L723    ASSIGN  STRAT_TAG
+L726    ASSIGN  PNL_TRACK_ON
+L727    ASSIGN  FEE_ON
+L734    ASSIGN  FEE_COMMISSION_RATE
+L735    ASSIGN  FEE_COMMISSION_MIN
+L736    ASSIGN  FEE_STAMP_RATE
+L737    ASSIGN  FEE_TRANSFER_RATE
+L741    ASSIGN  FEE_PROFILE
+L755    ASSIGN  FEE_CBOND_SELL_RATE
+L757    DEF     _prod_of(code)
+L782    DEF     fee_profile(code)
+L793    ASSIGN  PNL_WIN_STEP
+L794    ASSIGN  PNL_LOSS_STEP
+L795    ASSIGN  PNL_PF_STEP
+L796    ASSIGN  PNL_DAILY_REPORT_HM
+L797    ASSIGN  PNL_HALF_HOUR_REPORT_SEC
+L798    ASSIGN  PNL_BASE_ASSET
+L799    ASSIGN  PNL_LEDGER_CSV
+L800    ASSIGN  PNL_LEDGER_KEEP
+L803    CLASS   _G
+L806    ASSIGN  G
+L807    ASSIGN  C
+L808    ASSIGN  state_lock
+L809    ASSIGN  _API_LOCK
+L811    DEF     _api(fn)
+L823    ASSIGN  ready
+L824    ASSIGN  use_run_time
+L825    ASSIGN  last_poll_ts
+L826    ASSIGN  no_download
+L827    ASSIGN  dl1m_no_iface
+L828    ASSIGN  dl1m_last
+L829    ASSIGN  dl1m_logged
+L830    ASSIGN  accid
+L831    ASSIGN  universe
+L832    ASSIGN  calendar
+L833    ASSIGN  today
+L834    ASSIGN  refresh_date
+L835    ASSIGN  last_init_try
+L836    ASSIGN  dl_phase
+L837    ASSIGN  dl_i
+L838    ASSIGN  dl_mark
+L839    ASSIGN  hist
+L840    ASSIGN  candidates
+L841    ASSIGN  state
+L842    ASSIGN  buy_cnt
+L843    ASSIGN  sell_cnt
+L844    ASSIGN  last_rescreen_ts
+L845    ASSIGN  blacklist
+L846    ASSIGN  st_hist
+L847    ASSIGN  phase
+L848    ASSIGN  cal_warn_ts
+L849    ASSIGN  cal_retry_ts
+L850    ASSIGN  cal_note_date
+L851    ASSIGN  calendar_source
+L852    ASSIGN  calendar_last_update
+L854    ASSIGN  last_day_phase_key
+L855    ASSIGN  blacklist_date
+L856    ASSIGN  st_hist_date
+L857    ASSIGN  risk_ex
+L858    ASSIGN  risk_ex_date
+L859    ASSIGN  risk_ex_try_ts
+L860    ASSIGN  risk_ex_sig
+L861    ASSIGN  risk_ex_stat_ts
+L862    ASSIGN  risk_ex_src_warn_date
+L863    ASSIGN  hot_sectors
+L864    ASSIGN  hot_stock_set
+L865    ASSIGN  hot_sectors_date
+L866    ASSIGN  hot_sectors_ok
+L867    ASSIGN  last_hb_ts
+L868    ASSIGN  hourly_reason_ts
+L869    ASSIGN  hourly_buy_reason
+L870    ASSIGN  hourly_sell_reason
+L873    ASSIGN  hourly_buy_last_cnt
+L874    ASSIGN  hourly_sell_last_cnt
+L876    ASSIGN  last_status_sig
+L877    ASSIGN  last_hb_pnl
+L878    ASSIGN  daybuy_note_date
+L879    ASSIGN  pnl
+L880    ASSIGN  state_bak_date
+L881    ASSIGN  atr_cache
+L882    ASSIGN  prev_close
+L883    ASSIGN  lock_note_date
+L884    ASSIGN  buy_open_note_date
+L885    ASSIGN  trap_note_date
+L886    ASSIGN  acct_ok
+L887    ASSIGN  acct_probe_ts
+L888    ASSIGN  state_broken
+L889    ASSIGN  save_fail_n
+L890    ASSIGN  notify_queue
+L891    ASSIGN  notify_ip_cache
+L892    ASSIGN  notify_lock
+L894    ASSIGN  blacklist_warn_ts
+L895    ASSIGN  st_hist_warn_ts
+L896    ASSIGN  pos_empty_n
+L899    ASSIGN  loss_data_ok
+L900    ASSIGN  data_ready
+L901    ASSIGN  loss_alert_date
+L902    ASSIGN  loss_degrade_date
+L903    ASSIGN  loss_alert_fired
+L904    ASSIGN  data_alert_date
+L905    ASSIGN  stale_rounds
+L906    ASSIGN  startup_notes_done
+L907    ASSIGN  tick_err_date
+L908    ASSIGN  loss_pending_ts
+L909    ASSIGN  year_prompt
+L910    ASSIGN  log_buf
+L911    ASSIGN  log_last_flush
+L912    ASSIGN  log_lock
+L916    DEF     _flush_log(force)
+L959    DEF     log()
+L977    DEF     _fmt_param(v)
+L993    DEF     trigger_log(trigger, action, detail)
+L1015   DEF     _account_suffix()
+L1032   DEF     _split_name(raw)
+L1038   DEF     _join_base(name)
+L1049   DEF     state_path()
+L1055   DEF     run_log_path()
+L1067   DEF     file_base_dir()
+L1083   DEF     startup_selftest()
+L1137   DEF     names_cache_path()
+L1142   DEF     _flush_names_cache(force)
+L1166   DEF     _load_names_cache(st)
+L1192   DEF     _merge_external_daily_buys()
+L1248   DEF     _disk_adjust_daily_buy(delta, code)
+L1279   DEF     save_state(critical)
+L1351   DEF     _state_load_candidates()
+L1375   ASSIGN  _STATE_SCHEMA
+L1383   ASSIGN  _HOLD_MISSING
+L1385   DEF     load_state()
+L1491   DEF     _blocked_ip(ip)
+L1501   DEF     notify(text)
+L1548   DEF     notify_enqueue(text)
+L1570   DEF     notify_drain(max_items, max_seconds)
+L1588   DEF     elapsed_trading_minutes(now)
+L1605   DEF     _proj_vol_ratio(elap_min)
+L1634   DEF     _df_to_rows(df)
+L1654   DEF     _bars_to_dict(df)
+L1700   DEF     _f(x)
+L1709   DEF     _bar_dt_min(k)
+L1749   DEF     _bar_dt_date(k)
+L1772   DEF     _is_today_bar(k, today)
+L1781   DEF     _bardate_loose(k)
+L1816   DEF     _normalize_ts(k)
+L1844   DEF     _is_bar_fresh(k, now, tolerance_sec)
+L1878   DEF     _subscribe_quotes(watch)
+L1960   DEF     _refresh_ticks(watch)
+L2244   DEF     _round2(x)
+L2248   DEF     flush_st_coef_note()
+L2286   DEF     _zt_coef(code, trade_date, name_at_date)
+L2322   DEF     inst_name(stock)
+L2359   DEF     is_st_name(name)
+L2373   DEF     name_known(stock)
+L2386   DEF     excluded(stock)
+L2405   DEF     can_trade()
+L2412   DEF     probe_account()
+L2424   DEF     _band_pct(code)
+L2444   DEF     day_limit_prices(code)
+L2457   DEF     clamp_order_price(px, tick, is_buy, code)
+L2493   DEF     held_trd_days(buy_date)
+L2507   DEF     fmt_pnl(pnl, pct)
+L2516   DEF     ledger_path()
+L2521   DEF     _transfer_rate_for(code)
+L2538   DEF     _order_fee_delta(order_id, amount, calc)
+L2573   DEF     fee_buy(amount, code, order_id, n_order)
+L2590   DEF     fee_sell(amount, code, order_id, n_order)
+L2607   DEF     pos_vol(h)
+L2615   DEF     pos_cost(h)
+L2625   DEF     min_profit_pct(h, code)
+L2642   DEF     net_pnl_if_sell(h, lp, code)
+L2658   DEF     is_at_loss(h, lp)
+L2684   DEF     loss_cost_basis(h)
+L2693   DEF     pnl_stat()
+L2713   DEF     pnl_meta()
+L2728   DEF     pnl_base_asset(cur_asset)
+L2742   DEF     pnl_mode_note()
+L2747   DEF     pnl_pct_of(pnl, base)
+L2751   DEF     fmt_money(v)
+L2755   DEF     pnl_level(pct, step_ratio)
+L2761   DEF     _safe_rollback_placeholder(s)
+L2781   DEF     _keep_partial_hold(s)
+L2806   DEF     is_own_position(h)
+L2815   DEF     mode_pos_count(extra)
+L2822   DEF     pnl_alert(text)
+L2835   DEF     loss_data_source_alert(ok, probe_n, detail)
+L2855   DEF     used_capital()
+L2888   DEF     abs_cap_left(price)
+L2909   DEF     data_gate()
+L2959   DEF     data_quality_alert(note)
+L2974   ASSIGN  _FP_DENY
+L2989   DEF     _fp_keys()
+L3000   DEF     _fp_calc(keys)
+L3009   DEF     param_fingerprint()
+L3030   DEF     code_fingerprint()
+L3041   DEF     ledger_append(rec)
+L3080   DEF     ledger_buy(s, h, price, vol, reason, npos_before, was_new, pos_before, fee)
+L3103   DEF     ledger_sell(s, h, price, vol, reason, npos_before, order_id)
+L3143   DEF     _deal_diag_log(msg)
+L3155   DEF     _deal_field_sample(d)
+L3171   DEF     _find_manual_sell_deal(code)
+L3223   DEF     estimate_close(s, h, note)
+L3320   DEF     alert_open(rec, cash_before, cash_after)
+L3339   DEF     alert_close(rec, cash_before, cash_after)
+L3360   DEF     alert_unreal(s, h, lp, mv, unreal, pct, days, kind, level, step)
+L3378   DEF     alert_portfolio(snap, sig, level)
+L3405   DEF     _ledger_today_counts()
+L3426   DEF     _ledger_today_pnl()
+L3444   DEF     alert_daily_report(snap)
+L3480   DEF     pnl_halfhour_report(snap)
+L3551   DEF     pnl_brief()
+L3565   DEF     strategy_status_signature(phase)
+L3596   DEF     strategy_pnl_value()
+L3605   DEF     status_log_if_changed(phase, force)
+L3635   DEF     pnl_startup_note()
+L3667   DEF     pnl_tick()
+L3704   DEF     _pnl_tick_unlocked(ticks)
+L3893   DEF     size_equity()
+L3921   DEF     atr_of(s)
+L3963   DEF     last_close_of(s)
+L3975   DEF     sell_stall_confirmed(s, h, lp, t)
+L4012   DEF     calc_stop_pct(atr_pct)
+L4017   DEF     calc_size(s, price, atr, atr_pct, eq, cash)
+L4128   DEF     lock_state()
+L4141   DEF     trd_days_after(ymd, n)
+L4148   DEF     pause_until(ymd, n)
+L4163   DEF     in_pause(until)
+L4173   DEF     market_tide_check()
+L4254   DEF     pos_limit()
+L4257   DEF     _parse_emergency_text(raw)
+L4280   DEF     emergency_mode_effective()
+L4319   DEF     emergency_block(side)
+L4341   DEF     can_open_new()
+L4407   DEF     settle_pending(pos_total)
+L4433   DEF     settle_after_close(s, pnl, round_fee)
+L4484   DEF     handoff_records()
+L4492   DEF     is_handoff(h)
+L4496   DEF     handoff_credit()
+L4510   DEF     eff_cash(cash)
+L4521   DEF     exit_price_needed(h, code)
+L4552   DEF     trap_metrics(s, h, lp)
+L4563   DEF     trap_gap_ok(last_date, n)
+L4581   DEF     manual_alert_path()
+L4586   DEF     write_manual_todo()
+L4623   DEF     fire_trap_alert(s, h, lp, kind, reason)
+L4663   DEF     blacklist_add(s, reason)
+L4700   DEF     blacklist_remove_tagged(s)
+L4729   DEF     handoff_position(s, h, lp, reason)
+L4762   DEF     monitor_handoff(s, h, lp)
+L4785   DEF     check_trap(s, h, lp)
+L4815   DEF     clear_handoff(s, note)
+L4835   DEF     trap_sweep()
+L4861   DEF     mark_sold(s)
+L4866   DEF     rebuy_blocked(s, t0)
+L4883   ASSIGN  ORDER_STATUS_MAP
+L4888   DEF     _mode_buckets()
+L4901   DEF     daily_buy_cap(mode)
+L4910   DEF     daily_sell_cap(mode)
+L4916   DEF     daily_buy_state(mode)
+L4935   DEF     daily_sell_state(mode)
+L4953   DEF     daily_buy_blocked(mode)
+L4968   DEF     daily_buy_left(mode)
+L4979   DEF     daily_sell_left(mode)
+L4988   DEF     daily_buy_done(s, mode)
+L4997   DEF     daily_sell_done(s, mode)
+L5006   DEF     daily_add_state(mode)
+L5027   DEF     daily_add_done(s, mode)
+L5036   DEF     query_order_status(s, ords_snap)
+L5054   DEF     note_order_id(code, rm, oid)
+L5077   DEF     _oid_sort_key(oid)
+L5085   DEF     _code_with_suffix(code)
+L5093   DEF     disp_code(s, name)
+L5110   DEF     disp(s)
+L5114   DEF     buy_scope_ok(s)
+L5121   DEF     sell_scope_ok(s)
+L5125   DEF     is_strategy_target(code)
+L5154   DEF     scope_refuse(s, side)
+L5171   DEF     _clock_session_note()
+L5180   DEF     _today_has_bars(ymd)
+L5212   DEF     load_local_calendar()
+L5272   ASSIGN  _WD_CN
+L5274   DEF     log_day_phase_banner(force)
+L5315   DEF     refresh_calendar()
+L5504   DEF     is_trading_day(ymd)
+L5513   DEF     market_phase(ymd, hm)
+L5529   DEF     load_universe()
+L5548   DEF     step_day_init()
+L5727   DEF     detect_volume_unit(d1, sample_cap)
+L5804   DEF     detect_tick_volume_unit(stocks, sample_cap)
+L5841   DEF     _tick_unit_blocked()
+L5851   DEF     _tick_to_daily_scale()
+L5859   DEF     load_history()
+L6024   DEF     blacklist_path()
+L6029   DEF     load_blacklist()
+L6077   DEF     st_hist_path()
+L6082   DEF     load_st_hist()
+L6136   DEF     _risk_ex_sig_of(path)
+L6146   DEF     _risk_ex_cur_sig()
+L6155   DEF     risk_exclude_path()
+L6160   DEF     _risk_exclude_candidates()
+L6166   DEF     _risk_src_err_short(e)
+L6186   DEF     load_risk_exclude()
+L6386   IMPORT  import ssl as _ssl_excl
+L6387   IMPORT  import urllib.parse as _uparse_excl
+L6388   IMPORT  import urllib.request as _urequest_excl
+L6390   ASSIGN  _RISK_TIMEOUT
+L6391   ASSIGN  _RISK_DAYS
+L6392   ASSIGN  _RISK_ANN_PAGES
+L6393   ASSIGN  _RISK_UA
+L6394   ASSIGN  _RISK_DC
+L6395   ASSIGN  _RISK_SINA_HS
+L6396   ASSIGN  _RISK_ANN
+L6397   ASSIGN  _RISK_ANN_KW
+L6398   ASSIGN  _RISK_ANN_SKIP
+L6399   ASSIGN  _RISK_LOSS_KW
+L6402   CLASS   _BagExcl
+    L6404    .__init__(self)
+    L6407    .add(self, code, tag, reason)
+    L6419    .to_dict(self)
+L6423   DEF     _http_risk(url, timeout, retries, enc)
+L6445   DEF     _suffix_risk(code)
+L6460   DEF     _norm_risk(secucode, seccode)
+L6467   DEF     _iso_risk(d)
+L6471   DEF     _fetch_st_risk(bag)
+L6500   DEF     _fetch_st_local_risk(bag, account)
+L6525   DEF     _fetch_lift_risk(bag, days)
+L6560   DEF     _fetch_decrease_risk(bag, days)
+L6589   DEF     _fetch_loss_risk(bag, days)
+L6617   DEF     _fetch_ann_risk(bag, days, max_pages)
+L6664   DEF     _auto_risk_exclude()
+L6747   DEF     risk_excluded(s)
+L6770   DEF     get_recent_net_profit(s)
+L6895   DEF     _float_market_cap_yi(stock)
+L6965   DEF     _last_close_of(stock)
+L6976   DEF     _float_share(stock)
+L7020   DEF     get_recent_net_profit_cached(s)
+L7035   DEF     _ts_to_date(t)
+L7050   DEF     _fin_short(k)
+L7056   DEF     _extract_fin_rows(cfd, code, table)
+L7135   DEF     _pick_latest_fin_row(rows, _report_date, _announce_date, today)
+L7167   DEF     _download_qmt_financial_data(stocks)
+L7202   DEF     _probe_financial_data(stocks)
+L7205   DEF     ensure_financial_data(stocks)
+L7225   DEF     _mark_loss_degraded()
+L7241   DEF     _mark_mcap_degraded(n_degrade, n_checked)
+L7262   DEF     _fin_unknown_rd()
+L7281   DEF     risk_blocked(s, comp)
+L7372   DEF     ma10_held_after_zt(comp, p)
+L7401   DEF     zt_low_held(comp, p)
+L7416   DEF     ma5_of_comp(comp)
+L7425   DEF     detect_confirm_entry(comp, p)
+L7449   DEF     detect_ma5_break(comp, p, base_vol)
+L7472   DEF     _norm_code(s)
+L7476   DEF     _fetch_sector_members()
+L7512   DEF     _autofix_sector_data()
+L7520   DEF     load_hot_sectors()
+L7608   DEF     stock_in_hot_sector(s)
+L7626   DEF     financial_data_recheck()
+L7659   DEF     screen_candidates()
+L8086   DEF     rescreen_if_needed()
+L8145   DEF     dry_cash_delta(d)
+L8152   DEF     _own_hold_count()
+L8160   DEF     query_account()
+L8236   DEF     _estimate_base_vol(code)
+L8251   DEF     reconcile_positions()
+L8681   DEF     day_pos(tick, lp)
+L8694   DEF     in_high_zone(pos)
+L8701   DEF     pyramid_alloc(plan_vol)
+L8729   DEF     pyramid_remain(h)
+L8740   DEF     _set_buy_ctx(code, ctx)
+L8767   DEF     pyramid_add(s, h, lp, vol, batch_idx, batch_total, reason, tick)
+L8876   DEF     risk_increase_allowed()
+L8914   DEF     run_pyramid_adds(ticks, cash, ords_snap)
+L9245   DEF     _norm_reason(r)
+L9260   DEF     hourly_reason_note(side, code, name, reason)
+L9291   DEF     _hourly_fmt(d)
+L9310   DEF     hourly_reason_dump(force)
+L9348   DEF     buy_stock(c, lp, est, ratio, cash, want_vol, atr, atr_pct, stop_pct, plan, tick,)
+L9579   DEF     sell_stock(s, h, pos_avail, lp, reason, tick)
+L9618   DEF     place_sell_order(s, h, vol, lp, reason, tick, ords_snap)
+L9834   DEF     _own_order(o, s, side)
+L9851   DEF     _find_order_obj(s, side, ords_snap)
+L9891   DEF     sell_order_obj(s, ords_snap)
+L9903   DEF     cancel_sell_order(o)
+L9923   DEF     handle_unfilled_sell(s, h, pos_avail, lp, tick, ords_snap)
+L10047  ASSIGN  ACTIVE_ORDER_STATUS
+L10049  DEF     buy_order_obj(s, ords_snap)
+L10058  DEF     cancel_buy_order(s, o)
+L10079  DEF     handle_unfilled_buy(s, h, ords_snap)
+L10290  DEF     run_round()
+L10419  DEF     _run_round_unlocked(ticks, pos_total, pos_avail, cash, elap, k, ords_snap)
+L11070  DEF     order_callback(ContextInfo, orderInfo)
+L11119  DEF     _sim_fill_prob_dynamic(s, price, volume)
+L11147  DEF     _sim_deal(remark, price, volume)
+L11244  DEF     _deal_key(dealInfo, code, side, price, volume)
+L11264  DEF     deal_callback(ContextInfo, dealInfo)
+L11507  DEF     orderError_callback(ContextInfo, orderArgs, errMsg)
+L11591  DEF     print_summary()
+L11614  DEF     init(ContextInfo)
+L11805  ASSIGN  _HB_STATE
+L11809  DEF     heartbeat_path()
+L11829  ASSIGN  _GEN_STATE
+L11837  ASSIGN  _GEN_DOWN
+L11840  DEF     gen_path()
+L11847  DEF     gen_announce()
+L11871  DEF     _gen_superseded()
+L11911  DEF     heartbeat_tick(force)
+L12037  DEF     log_guard(ContextInfo)
+L12061  DEF     after_init(ContextInfo)
+L12073  DEF     handlebar(ContextInfo)
+L12088  DEF     timer_poll(ContextInfo)
+L12119  DEF     _timer_poll_unlocked(ContextInfo)
+L12299  ASSIGN  _SENTIMENT_ON
+L12300  ASSIGN  _SENTIMENT_PHASE
+L12301  ASSIGN  _SENTIMENT_READY
+L12304  ASSIGN  SENT_VERSION
+L12305  ASSIGN  SENT_LAG_DAYS
+L12306  ASSIGN  SENT_ZSCORE_WIN
+L12307  ASSIGN  SENT_MIN_PERIODS
+L12308  ASSIGN  SENT_WINSORIZE_LOWER
+L12309  ASSIGN  SENT_WINSORIZE_UPPER
+L12310  ASSIGN  SENT_CLIP_LIMIT
+L12311  ASSIGN  SENT_EWMA_SPAN
+L12312  ASSIGN  SENT_SENTIMENT_WEIGHTS
+L12317  ASSIGN  SENT_EVT_FRENZY_ADVPCT
+L12318  ASSIGN  SENT_EVT_FRENZY_LIMITUP
+L12319  ASSIGN  SENT_EVT_PANIC_ADVPCT
+L12320  ASSIGN  SENT_REGIME_PANIC_LO
+L12325  ASSIGN  SENT_REGIME_FRENZY_HI
+L12326  ASSIGN  SENT_CORE_PARAMS
+L12332  ASSIGN  SENT_REGIME_PARAMS
+L12337  ASSIGN  SENT_SIZE_HOT_TANH_K
+L12338  ASSIGN  SENT_SIZE_MIN_MULT
+L12339  ASSIGN  SENT_DEGRADE_ALERT_DAYS
+L12340  ASSIGN  SENT_MONITOR_MAX_STALE_DAYS
+L12341  ASSIGN  SENT_RETRY_SEC
+L12342  ASSIGN  SENT_HIST_MAX
+L12343  ASSIGN  SENT_BACKFILL_DAYS
+L12344  ASSIGN  SENT_INDEX_SYMBOL
+L12345  ASSIGN  SENT_COVERAGE_MIN
+L12348  ASSIGN  SENT_CARRY_LOG_SEC
+L12349  ASSIGN  SENT_CACHE_FILE
+L12350  ASSIGN  HEARTBEAT_FILE
+L12351  ASSIGN  HEARTBEAT_SEC
+L12352  ASSIGN  HEARTBEAT_STALE_SEC
+L12353  ASSIGN  HEARTBEAT_ALERT_SEC
+L12355  ASSIGN  SENT_STATE
+L12373  ASSIGN  _SENT_ACC
+L12397  DEF     _sent_acc_path()
+L12405  DEF     _sent_acc_dump()
+L12533  DEF     _sent_acc_load()
+L12641  ASSIGN  _SENT_FETCH_LOCK
+L12647  DEF     _exc_text(e)
+L12667  DEF     _sent_wlog(msg)
+L12679  DEF     _sent_regime_cn(r)
+L12684  DEF     _sent_human_readable(sig)
+L12726  DEF     _sent_fetch_from_cache()
+L12820  DEF     _sent_today()
+L12832  DEF     _sent_f(v, dflt)
+L12845  DEF     _sent_quantile(vals, q)
+L12862  DEF     _sent_roll(vals, idx, win, minp)
+L12878  DEF     _sent_ewma(vals, span)
+L12897  DEF     _sent_col_series(rows, key)
+L12902  DEF     _sent_z_last(vals, win)
+L12919  DEF     _sent_tanh(x)
+L12937  DEF     sent_fingerprint()
+L12956  DEF     sent_fetch_all_data()
+L13034  DEF     _sent_override_note(ovs)
+L13062  DEF     _sent_cache_path()
+L13068  DEF     _sent_cache_load()
+L13091  DEF     _sent_cache_save(sig)
+L13117  DEF     _sent_use_last_good(why)
+L13203  DEF     _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc)
+L13242  DEF     _sent_apply_rows(rows)
+L13362  DEF     _sent_degrade_alert(why)
+L13382  DEF     _sent_fetch_worker(_lock)
+L13402  DEF     _sent_fetch_sync()
+L14386  DEF     _winsorize_list(vals)
+L14396  DEF     _sent_comp_note(sig)
+L14414  DEF     _sent_compute(rows)
+L14496  DEF     _sent_fresh_enough(last_date, today)
+L14518  DEF     sent_bootstrap()
+L14573  DEF     sent_daily_refresh()
+L14640  DEF     _sent_reset_ready(why)
+L14652  DEF     sent_gate_skip()
+L14667  DEF     sent_block_note()
+L14682  DEF     sent_size_mult()
+L14692  DEF     sent_param_overrides()
+L14702  DEF     sent_param(name, default)

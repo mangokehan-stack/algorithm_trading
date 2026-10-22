@@ -1,0 +1,42 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "artifact_2c131394c3ff748dbde062ac",
+      "current_revision_id": "revision_6d95b5c405fb99bd8ed5e12c",
+      "filename": "_tool_risk_exclude.py",
+      "kind": "code",
+      "mime": "text/x-python",
+      "rel_path": "_tool_risk_exclude.py",
+      "revisions": [
+        {
+          "artifact_revision_id": "revision_031c14447b76e4881eaa0e82",
+          "produced_at": "2026-10-21T09:47:20+08:00",
+          "sha256": "091502f0b448cd90e979259d4dc1edbffaa9c43e1e653a68927b45e6d177e452",
+          "size": 29408,
+          "turn_id": "dff469a7-c7df-4baf-806d-f20fa0ad1877"
+        },
+        {
+          "artifact_revision_id": "revision_16b1db725a69f9ca5a268f0d",
+          "produced_at": "2026-10-21T09:48:06+08:00",
+          "sha256": "f2e13d3fe37f2af1a42fe37bc45739da43cfdc85fb921b27e4b2590e038cd0e4",
+          "size": 29543,
+          "turn_id": "dff469a7-c7df-4baf-806d-f20fa0ad1877"
+        },
+        {
+          "artifact_revision_id": "revision_6d95b5c405fb99bd8ed5e12c",
+          "produced_at": "2026-10-21T10:12:09+08:00",
+          "sha256": "2d7c288ee8093bdb4d45fb7bdc6a661e87ed9173358fbd7b6b9f0735670dc847",
+          "size": 29533,
+          "turn_id": "4181f960-c991-4dd5-86f5-dcc2aefb7de2"
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-10-20T14:26:45.782934+00:00",
+  "current_turn_id": "689aa30e-2889-4cf5-86c3-2b7e14c92de0",
+  "execution_status": "completed",
+  "schema_version": 3,
+  "session_id": "1fedaed6-f8da-48b6-8b85-8569c619cbb9",
+  "task_id": "1fedaed6-f8da-48b6-8b85-8569c619cbb9",
+  "updated_at": "2026-10-21T02:24:55.341697+00:00"
+}

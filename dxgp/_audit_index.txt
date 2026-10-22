@@ -1,0 +1,717 @@
+总行数 14571
+==========================================================================================
+【一】顶层函数/类 (按行号)
+==========================================================================================
+L261    13  行  def _slippage_for(price)
+L749    24  行  def _prod_of(code)
+L774    5   行  def fee_profile(code)
+L795    2   行  class _G
+L803    12  行  def _api(fn)
+L908    42  行  def _flush_log(force)
+L951    16  行  def log()
+L969    14  行  def _fmt_param(v)
+L985    18  行  def trigger_log(trigger, action, detail)
+L1007   16  行  def _account_suffix()
+L1024   5   行  def _split_name(raw)
+L1030   10  行  def _join_base(name)
+L1041   4   行  def state_path()
+L1047   11  行  def run_log_path()
+L1059   14  行  def file_base_dir()
+L1075   52  行  def startup_selftest()
+L1129   4   行  def names_cache_path()
+L1134   23  行  def _flush_names_cache(force)
+L1158   25  行  def _load_names_cache(st)
+L1184   55  行  def _merge_external_daily_buys()
+L1240   30  行  def _disk_adjust_daily_buy(delta, code)
+L1271   71  行  def save_state(critical)
+L1343   18  行  def _state_load_candidates()
+L1377   105 行  def load_state()
+L1483   9   行  def _blocked_ip(ip)
+L1493   46  行  def notify(text)
+L1540   21  行  def notify_enqueue(text)
+L1562   15  行  def notify_drain(max_items, max_seconds)
+L1580   16  行  def elapsed_trading_minutes(now)
+L1597   28  行  def _proj_vol_ratio(elap_min)
+L1626   18  行  def _df_to_rows(df)
+L1646   45  行  def _bars_to_dict(df)
+L1692   9   行  def _f(x)
+L1701   38  行  def _bar_dt_min(k)
+L1741   21  行  def _bar_dt_date(k)
+L1764   7   行  def _is_today_bar(k, today)
+L1773   33  行  def _bardate_loose(k)
+L1808   27  行  def _normalize_ts(k)
+L1836   30  行  def _is_bar_fresh(k, now, tolerance_sec)
+L1870   80  行  def _subscribe_quotes(watch)
+L1952   282 行  def _refresh_ticks(watch)
+L2236   3   行  def _round2(x)
+L2240   36  行  def flush_st_coef_note()
+L2278   35  行  def _zt_coef(code, trade_date, name_at_date)
+L2314   36  行  def inst_name(stock)
+L2351   12  行  def is_st_name(name)
+L2365   11  行  def name_known(stock)
+L2378   18  行  def excluded(stock)
+L2397   6   行  def can_trade()
+L2404   11  行  def probe_account()
+L2416   19  行  def _band_pct(code)
+L2436   12  行  def day_limit_prices(code)
+L2449   35  行  def clamp_order_price(px, tick, is_buy, code)
+L2485   13  行  def held_trd_days(buy_date)
+L2499   7   行  def fmt_pnl(pnl, pct)
+L2508   4   行  def ledger_path()
+L2513   16  行  def _transfer_rate_for(code)
+L2530   10  行  def fee_buy(amount, code)
+L2541   12  行  def fee_sell(amount, code)
+L2554   7   行  def pos_vol(h)
+L2562   9   行  def pos_cost(h)
+L2572   16  行  def min_profit_pct(h, code)
+L2589   15  行  def net_pnl_if_sell(h, lp, code)
+L2605   25  行  def is_at_loss(h, lp)
+L2631   8   行  def loss_cost_basis(h)
+L2640   19  行  def pnl_stat()
+L2660   14  行  def pnl_meta()
+L2675   13  行  def pnl_base_asset(cur_asset)
+L2689   4   行  def pnl_mode_note()
+L2694   3   行  def pnl_pct_of(pnl, base)
+L2698   3   行  def fmt_money(v)
+L2702   5   行  def pnl_level(pct, step_ratio)
+L2708   18  行  def _safe_rollback_placeholder(s)
+L2728   24  行  def _keep_partial_hold(s)
+L2753   8   行  def is_own_position(h)
+L2762   6   行  def mode_pos_count(extra)
+L2769   12  行  def pnl_alert(text)
+L2782   19  行  def loss_data_source_alert(ok, probe_n, detail)
+L2802   31  行  def used_capital()
+L2835   20  行  def abs_cap_left(price)
+L2856   49  行  def data_gate()
+L2906   12  行  def data_quality_alert(note)
+L2933   9   行  def _fp_keys()
+L2944   7   行  def _fp_calc(keys)
+L2953   19  行  def param_fingerprint()
+L2974   10  行  def code_fingerprint()
+L2985   38  行  def ledger_append(rec)
+L3024   18  行  def ledger_buy(s, h, price, vol, reason, npos_before, was_new, pos_before)
+L3043   39  行  def ledger_sell(s, h, price, vol, reason, npos_before)
+L3083   10  行  def _deal_diag_log(msg)
+L3095   14  行  def _deal_field_sample(d)
+L3111   50  行  def _find_manual_sell_deal(code)
+L3163   96  行  def estimate_close(s, h, note)
+L3260   18  行  def alert_open(rec, cash_before, cash_after)
+L3279   20  行  def alert_close(rec, cash_before, cash_after)
+L3300   17  行  def alert_unreal(s, h, lp, mv, unreal, pct, days, kind, level, step)
+L3318   16  行  def alert_portfolio(snap, sig, level)
+L3345   19  行  def _ledger_today_counts()
+L3366   16  行  def _ledger_today_pnl()
+L3384   35  行  def alert_daily_report(snap)
+L3420   70  行  def pnl_halfhour_report(snap)
+L3491   12  行  def pnl_brief()
+L3505   30  行  def strategy_status_signature(phase)
+L3536   8   行  def strategy_pnl_value()
+L3545   29  行  def status_log_if_changed(phase, force)
+L3575   31  行  def pnl_startup_note()
+L3607   36  行  def pnl_tick()
+L3644   187 行  def _pnl_tick_unlocked(ticks)
+L3833   27  行  def size_equity()
+L3861   41  行  def atr_of(s)
+L3903   11  行  def last_close_of(s)
+L3915   36  行  def sell_stall_confirmed(s, h, lp, t)
+L3952   4   行  def calc_stop_pct(atr_pct)
+L3957   110 行  def calc_size(s, price, atr, atr_pct, eq, cash)
+L4068   12  行  def lock_state()
+L4081   6   行  def trd_days_after(ymd, n)
+L4088   14  行  def pause_until(ymd, n)
+L4103   9   行  def in_pause(until)
+L4113   80  行  def market_tide_check()
+L4194   2   行  def pos_limit()
+L4197   22  行  def _parse_emergency_text(raw)
+L4220   38  行  def emergency_mode_effective()
+L4259   21  行  def emergency_block(side)
+L4281   63  行  def can_open_new()
+L4345   25  行  def settle_pending(pos_total)
+L4371   49  行  def settle_after_close(s, pnl, round_fee)
+L4422   7   行  def handoff_records()
+L4430   3   行  def is_handoff(h)
+L4434   8   行  def handoff_credit()
+L4448   10  行  def eff_cash(cash)
+L4459   30  行  def exit_price_needed(h, code)
+L4490   10  行  def trap_metrics(s, h, lp)
+L4501   17  行  def trap_gap_ok(last_date, n)
+L4519   4   行  def manual_alert_path()
+L4524   36  行  def write_manual_todo()
+L4561   39  行  def fire_trap_alert(s, h, lp, kind, reason)
+L4601   36  行  def blacklist_add(s, reason)
+L4638   28  行  def blacklist_remove_tagged(s)
+L4667   32  行  def handoff_position(s, h, lp, reason)
+L4700   22  行  def monitor_handoff(s, h, lp)
+L4723   29  行  def check_trap(s, h, lp)
+L4753   19  行  def clear_handoff(s, note)
+L4773   24  行  def trap_sweep()
+L4799   4   行  def mark_sold(s)
+L4804   16  行  def rebuy_blocked(s, t0)
+L4826   12  行  def _mode_buckets()
+L4839   8   行  def daily_buy_cap(mode)
+L4848   5   行  def daily_sell_cap(mode)
+L4854   18  行  def daily_buy_state(mode)
+L4873   17  行  def daily_sell_state(mode)
+L4891   14  行  def daily_buy_blocked(mode)
+L4906   10  行  def daily_buy_left(mode)
+L4917   8   行  def daily_sell_left(mode)
+L4926   8   行  def daily_buy_done(s, mode)
+L4935   8   行  def daily_sell_done(s, mode)
+L4944   20  行  def daily_add_state(mode)
+L4965   8   行  def daily_add_done(s, mode)
+L4974   17  行  def query_order_status(s, ords_snap)
+L4992   22  行  def note_order_id(code, rm, oid)
+L5015   7   行  def _oid_sort_key(oid)
+L5023   7   行  def _code_with_suffix(code)
+L5031   16  行  def disp_code(s, name)
+L5048   3   行  def disp(s)
+L5052   6   行  def buy_scope_ok(s)
+L5059   3   行  def sell_scope_ok(s)
+L5063   28  行  def is_strategy_target(code)
+L5092   17  行  def scope_refuse(s, side)
+L5109   8   行  def _clock_session_note()
+L5118   31  行  def _today_has_bars(ymd)
+L5150   59  行  def load_local_calendar()
+L5212   39  行  def log_day_phase_banner(force)
+L5253   188 行  def refresh_calendar()
+L5442   8   行  def is_trading_day(ymd)
+L5451   15  行  def market_phase(ymd, hm)
+L5467   18  行  def load_universe()
+L5486   178 行  def step_day_init()
+L5665   75  行  def detect_volume_unit(d1, sample_cap)
+L5742   35  行  def detect_tick_volume_unit(stocks, sample_cap)
+L5779   8   行  def _tick_unit_blocked()
+L5789   7   行  def _tick_to_daily_scale()
+L5797   163 行  def load_history()
+L5962   4   行  def blacklist_path()
+L5967   47  行  def load_blacklist()
+L6015   4   行  def st_hist_path()
+L6020   53  行  def load_st_hist()
+L6074   8   行  def _risk_ex_sig_of(path)
+L6084   7   行  def _risk_ex_cur_sig()
+L6093   4   行  def risk_exclude_path()
+L6098   5   行  def _risk_exclude_candidates()
+L6104   18  行  def _risk_src_err_short(e)
+L6124   197 行  def load_risk_exclude()
+L6340   19  行  class _BagExcl
+L6361   20  行  def _http_risk(url, timeout, retries, enc)
+L6383   13  行  def _suffix_risk(code)
+L6398   5   行  def _norm_risk(secucode, seccode)
+L6405   2   行  def _iso_risk(d)
+L6409   27  行  def _fetch_st_risk(bag)
+L6438   23  行  def _fetch_st_local_risk(bag, account)
+L6463   33  行  def _fetch_lift_risk(bag, days)
+L6498   27  行  def _fetch_decrease_risk(bag, days)
+L6527   26  行  def _fetch_loss_risk(bag, days)
+L6555   45  行  def _fetch_ann_risk(bag, days, max_pages)
+L6602   82  行  def _auto_risk_exclude()
+L6685   21  行  def risk_excluded(s)
+L6708   123 行  def get_recent_net_profit(s)
+L6833   68  行  def _float_market_cap_yi(stock)
+L6903   9   行  def _last_close_of(stock)
+L6914   42  行  def _float_share(stock)
+L6958   13  行  def get_recent_net_profit_cached(s)
+L6973   13  行  def _ts_to_date(t)
+L6988   4   行  def _fin_short(k)
+L6994   77  行  def _extract_fin_rows(cfd, code, table)
+L7073   30  行  def _pick_latest_fin_row(rows, _report_date, _announce_date, today)
+L7105   35  行  def _download_qmt_financial_data(stocks)
+L7140   2   行  def _probe_financial_data(stocks)
+L7143   19  行  def ensure_financial_data(stocks)
+L7163   14  行  def _mark_loss_degraded()
+L7179   19  行  def _mark_mcap_degraded(n_degrade, n_checked)
+L7200   17  行  def _fin_unknown_rd()
+L7219   89  行  def risk_blocked(s, comp)
+L7310   27  行  def ma10_held_after_zt(comp, p)
+L7339   14  行  def zt_low_held(comp, p)
+L7354   8   行  def ma5_of_comp(comp)
+L7363   23  行  def detect_confirm_entry(comp, p)
+L7387   21  行  def detect_ma5_break(comp, p, base_vol)
+L7410   3   行  def _norm_code(s)
+L7414   35  行  def _fetch_sector_members()
+L7450   7   行  def _autofix_sector_data()
+L7458   87  行  def load_hot_sectors()
+L7546   16  行  def stock_in_hot_sector(s)
+L7564   32  行  def financial_data_recheck()
+L7597   426 行  def screen_candidates()
+L8024   57  行  def rescreen_if_needed()
+L8083   6   行  def dry_cash_delta(d)
+L8090   7   行  def _own_hold_count()
+L8098   74  行  def query_account()
+L8174   14  行  def _estimate_base_vol(code)
+L8189   408 行  def reconcile_positions()
+L8598   11  行  def day_pos(tick, lp)
+L8611   5   行  def in_high_zone(pos)
+L8618   26  行  def pyramid_alloc(plan_vol)
+L8646   9   行  def pyramid_remain(h)
+L8657   25  行  def _set_buy_ctx(code, ctx)
+L8684   107 行  def pyramid_add(s, h, lp, vol, batch_idx, batch_total, reason, tick)
+L8793   35  行  def risk_increase_allowed()
+L8829   328 行  def run_pyramid_adds(ticks, cash, ords_snap)
+L9160   13  行  def _norm_reason(r)
+L9175   29  行  def hourly_reason_note(side, code, name, reason)
+L9206   17  行  def _hourly_fmt(d)
+L9225   36  行  def hourly_reason_dump(force)
+L9263   230 行  def buy_stock(c, lp, est, ratio, cash, want_vol, atr, atr_pct, stop_pct, plan, tick, ords_snap)
+L9494   37  行  def sell_stock(s, h, pos_avail, lp, reason, tick)
+L9533   214 行  def place_sell_order(s, h, vol, lp, reason, tick, ords_snap)
+L9749   16  行  def _own_order(o, s, side)
+L9766   39  行  def _find_order_obj(s, side, ords_snap)
+L9806   10  行  def sell_order_obj(s, ords_snap)
+L9818   18  行  def cancel_sell_order(o)
+L9838   121 行  def handle_unfilled_sell(s, h, pos_avail, lp, tick, ords_snap)
+L9964   8   行  def buy_order_obj(s, ords_snap)
+L9973   20  行  def cancel_buy_order(s, o)
+L9994   210 行  def handle_unfilled_buy(s, h, ords_snap)
+L10205  128 行  def run_round()
+L10334  649 行  def _run_round_unlocked(ticks, pos_total, pos_avail, cash, elap, k, ords_snap)
+L10985  48  行  def order_callback(ContextInfo, orderInfo)
+L11034  27  行  def _sim_fill_prob_dynamic(s, price, volume)
+L11062  96  行  def _sim_deal(remark, price, volume)
+L11159  19  行  def _deal_key(dealInfo, code, side, price, volume)
+L11179  228 行  def deal_callback(ContextInfo, dealInfo)
+L11413  83  行  def orderError_callback(ContextInfo, orderArgs, errMsg)
+L11497  21  行  def print_summary()
+L11520  190 行  def init(ContextInfo)
+L11715  9   行  def heartbeat_path()
+L11746  5   行  def gen_path()
+L11753  22  行  def gen_announce()
+L11777  34  行  def _gen_superseded()
+L11813  124 行  def heartbeat_tick(force)
+L11939  18  行  def log_guard(ContextInfo)
+L11963  11  行  def after_init(ContextInfo)
+L11975  14  行  def handlebar(ContextInfo)
+L11990  28  行  def timer_poll(ContextInfo)
+L12019  166 行  def _timer_poll_unlocked(ContextInfo)
+L12297  6   行  def _sent_acc_path()
+L12305  126 行  def _sent_acc_dump()
+L12433  99  行  def _sent_acc_load()
+L12547  18  行  def _exc_text(e)
+L12567  9   行  def _sent_wlog(msg)
+L12579  3   行  def _sent_regime_cn(r)
+L12584  40  行  def _sent_human_readable(sig)
+L12626  74  行  def _sent_fetch_from_cache()
+L12703  10  行  def _sent_today()
+L12715  11  行  def _sent_f(v, dflt)
+L12728  15  行  def _sent_quantile(vals, q)
+L12745  14  行  def _sent_roll(vals, idx, win, minp)
+L12761  17  行  def _sent_ewma(vals, span)
+L12780  3   行  def _sent_col_series(rows, key)
+L12785  15  行  def _sent_z_last(vals, win)
+L12802  13  行  def _sent_tanh(x)
+L12820  14  行  def sent_fingerprint()
+L12839  76  行  def sent_fetch_all_data()
+L12917  26  行  def _sent_override_note(ovs)
+L12945  4   行  def _sent_cache_path()
+L12951  21  行  def _sent_cache_load()
+L12974  24  行  def _sent_cache_save(sig)
+L13000  84  行  def _sent_use_last_good(why)
+L13086  37  行  def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc)
+L13125  118 行  def _sent_apply_rows(rows)
+L13245  18  行  def _sent_degrade_alert(why)
+L13265  18  行  def _sent_fetch_worker(_lock)
+L13285  976 行  def _sent_fetch_sync()
+L14269  8   行  def _winsorize_list(vals)
+L14279  16  行  def _sent_comp_note(sig)
+L14297  80  行  def _sent_compute(rows)
+L14379  17  行  def _sent_fresh_enough(last_date, today)
+L14401  53  行  def sent_bootstrap()
+L14456  65  行  def sent_daily_refresh()
+L14523  10  行  def _sent_reset_ready(why)
+L14535  5   行  def sent_gate_skip()
+L14542  8   行  def sent_size_mult()
+L14552  8   行  def sent_param_overrides()
+L14562  6   行  def sent_param(name, default)
+
+顶层函数总行数 13020 / 14571 (占 89.4%)
+
+==========================================================================================
+【二】模块级大写常量 (%d 个)
+==========================================================================================
+L242    ACCOUNT_ID                   = ''
+L246    TRADE_MODE                   = 'live'
+L251    DRY_RUN                      = False
+L255    SLIPPAGE_PCT                 = 0.002
+L280    STRATEGY_CASH_CAP            = 200000.0
+L283    LOG_TO_FILE                  = True
+L285    LOG_FLUSH_INTERVAL           = 0.2
+L286    LOG_FLUSH_MAX                = 200
+L287    EMERGENCY_MODE               = 'normal'
+L291    EMERGENCY_FILE               = 'zt_shrink_emergency.json'
+L292    EMERGENCY_FILE_REFRESH_SEC   = 1.0
+L296    SELL_CTX_SETTLE_GRACE_SEC    = <表达式>
+L299    CSV_ENCODING                 = 'gbk'
+L302    TARGET_BUY_AMOUNT            = 20000.0
+L303    FIXED_BUY_VOL                = 100
+L304    MAX_DAILY_PICKS              = 2
+L305    DAILY_BUY_PICKS              = 1
+L306    MAX_DAILY_BUYS_LIVE          = 3
+L307    MAX_DAILY_BUYS_PAPER         = 3
+L308    BUY_BLOCK_TAG                = '手工封锁'
+L309    EXT_MERGE_INTERVAL_SEC       = 300
+L315    MAX_DAILY_SELLS_LIVE         = 0
+L316    MAX_DAILY_SELLS_PAPER        = 0
+L319    MAX_POSITIONS                = 3
+L321    MIN_BUY_AMOUNT               = 3000.0
+L322    DYN_PROFIT_FEE               = True
+L323    MIN_DAILY_AMOUNT             = 10000000.0
+L329    DAILY_VOL_UNIT               = 100
+L330    AUTO_VOL_UNIT                = True
+L331    TICK_VOL_UNIT                = 0
+L335    TICK_UNIT_BLOCK_DAYS         = 3
+L336    TICK_UNIT_ACK                = False
+L340    BUY_ORDER_TIMEOUT_SEC        = 600
+L341    BUY_ORDER_ERR_MAX            = 5
+L344    PYRAMID_MIN_DAY_MINUTES      = 5
+L345    PYRAMID_MIN_DAY_BARS         = 3
+L346    ORDER_CB_DEDUP_SEC           = 2.0
+L347    BUY_ORDER_RETRIES            = 2
+L349    SELL_ORDER_TIMEOUT_SEC       = 300
+L350    SELL_ORDER_ERR_MAX           = 5
+L351    SELL_ORDER_RETRIES           = 3
+L352    CANCEL_CONFIRM_GRACE_SEC     = 10
+L353    PRICE_CAGE_PCT               = 0.02
+L354    LIMIT_BAND_PCT               = 0.098
+L358    LIMIT_BAND_BSE               = 0.295
+L359    LIMIT_BAND_KEB               = 0.195
+L360    LIMIT_BAND_ST                = 0.049
+L361    PORTFOLIO_FUSE_LOSS          = 0.05
+L364    FUSE_PAUSE_TRDAYS            = 2
+L365    FUSE_AUTO_RESUME_DAYS        = 5
+L370    PORTFOLIO_HARD_DD_PCT        = 0.15
+L371    STATE_BAK_KEEP               = 3
+L372    REBUY_GAP_TRDAYS             = 10
+L373    LOOKBACK_TRDAYS              = 7
+L374    ONLY_SINGLE_ZT               = True
+L375    ZT_VOL_RATIO_MIN             = 1.2
+L376    BASE_VOL_RATIO_MIN           = 0.5
+L377    BUY_WINDOW_START             = 3
+L378    BUY_WINDOW_END               = 7
+L379    SHRINK_BUY_RATIO             = 0.36
+L383    BUY_TOL                      = 1.1
+L384    EXPAND_SELL_RATIO            = 2.0
+L389    SELL_TOL                     = 0.95
+L390    ZT_TURNOVER_MIN              = 0.05
+L391    ZT_TURNOVER_MAX              = 0.2
+L392    SELL_TURNOVER_TOP            = 0.3
+L393    MARKET_TIDE_CHECK            = True
+L394    MARKET_TIDE_INDEX            = '000001.SH'
+L395    MARKET_TIDE_LOOKBACK         = 3
+L396    MARKET_TIDE_DROP_PCT         = 0.03
+L397    EARLY_SELL_VOL_MULT          = 1.5
+L398    EARLY_SELL_BLOCK_MIN         = 30
+L399    EARLY_SELL_END_MIN           = 60
+L400    SELL_GIVEUP_RETRY_SEC        = 1800
+L401    MARKET_TIDE_ERR_BLOCK_N      = 2
+L402    MARKET_TIDE_RETRY_SEC        = 1800
+L410    STALL_CONFIRM_ON             = True
+L411    STALL_MAX_GAIN_PCT           = 0.01
+L412    STALL_NEWHIGH_DAYS           = 5
+L413    STALL_NEWHIGH_GAP            = 0.0
+L414    SELL_MIN_PROFIT_PCT          = 0.001
+L415    NEVER_STOP_LOSS              = True
+L419    MAX_HOLD_TRDAYS              = 33
+L420    BUY_MIN_ELAPSED_MIN          = 30
+L421    SELL_MIN_ELAPSED_MIN         = 5
+L422    MAX_PULLBACK_FROM_ZT         = 0.15
+L423    MAX_CHASE_OVER_ZT            = 0.03
+L424    EXCLUDE_ST                   = True
+L425    EXCLUDE_ST_HIST              = True
+L426    EXCLUDE_KCB                  = False
+L427    EXCLUDE_CYB                  = True
+L430    VERSION                      = 'V2.6.149'
+L431    CHECK_INTERVAL               = 30
+L432    HEARTBEAT_LOG_SEC            = 600
+L433    HOURLY_REASON_LOG_SEC        = 3600
+L437    HB_PNL_TRIGGER_PCT           = 0.01
+L440    CAL_RETRY_SEC                = 60
+L442    SESSION1_START               = 930
+L443    SESSION1_END                 = 1130
+L444    TICK_STALE_MAX_SEC           = 180
+L445    VOL_COMPLETE_MIN_RATIO       = 0.7
+L449    VOL_IMPLAUSIBLE_MIN_RATIO    = 0.05
+L450    BACKFILL_1M_ENABLE           = True
+L451    BACKFILL_1M_MIN_INTERVAL     = 120.0
+L452    BACKFILL_1M_MIN_BARS         = 8
+L453    BACKFILL_1M_TRIGGER_RATIO    = 0.9
+L456    SESSION2_START               = 1300
+L457    SESSION2_END                 = 1500
+L458    PHASE_NAME                   = {'trading': '交易时段', 'off_hours': '非交易时段(盘前/午休/盘后)', 'closed_day': '休市日(周末/法定节假日)', 'unk...
+L460    HISTORY_BARS                 = 120
+L461    MIN_HISTORY_BARS             = 8
+L462    DOWNLOAD_CHUNK               = 400
+L463    DOWNLOAD_START_DAYS          = 40
+L464    RESCREEN_INTERVAL            = 300
+L465    MIN_UNIVERSE_FOR_SCREEN      = 2000
+L466    MIN_UNIVERSE_RATIO           = 0.8
+L474    NEW_BUY_DATA_BLOCK           = False
+L475    DATA_BLOCK_RATIO             = 0.6
+L476    STALE_BLOCK_ROUNDS           = 2
+L477    DATA_ALERT_PUSH              = True
+L481    MARKET_CAP_FILTER_ON         = True
+L482    MARKET_CAP_MIN_YI            = 30.0
+L483    MARKET_CAP_MAX_YI            = 150.0
+L484    MARKET_CAP_DEGRADE           = True
+L485    MARKET_CAP_CACHE_SEC         = 300
+L492    PARAM_VERIFY_ENFORCE         = False
+L493    DOWNLOAD_TIME_BUDGET_SEC     = 8.0
+L497    VOL_PROJ_MODE                = 'linear'
+L503    VOL_PROJ_POWER               = 0.5
+L505    POS_EMPTY_CONFIRM_ROUNDS     = 3
+L511    STRATEGY_CAPITAL             = 200000.0
+L512    DYN_SIZING_ON                = True
+L513    SIZE_EQUITY_MODE             = 'current'
+L515    SIZE_EQUITY_INCLUDE_HANDOFF  = True
+L519    SINGLE_POSITION_MODE         = False
+L522    RISK_PCT                     = 0.05
+L528    DEGRADE_TOLERANCE            = 2.0
+L531    ATR_PERIOD                   = 14
+L532    ATR_STOP_MULT                = 2.0
+L533    ATR_STOP_MAX                 = 0.15
+L534    ATR_PCT_MAX                  = 0.12
+L535    ATR_BARS                     = 30
+L536    MAX_POS_VALUE_PCT            = 1.0
+L537    MAX_TOTAL_VALUE_PCT          = 1.0
+L538    MAX_DAILY_SWING_PCT          = 0.04
+L539    MAX_POS_VALUE_ABS            = 66666.66
+L541    CASH_USE_PCT                 = 0.95
+L542    LOT_SIZE                     = 100
+L545    RUN_ROUND_GUARD_SEC          = 5.0
+L551    SIM_FILL_PROB                = 1.0
+L557    SIM_DRY_FILL_PROB            = 0.95
+L563    SIM_PARTIAL_FILL_ON          = False
+L564    SIM_PARTIAL_FILL_MIN         = 0.3
+L565    SIM_PARTIAL_FILL_MAX         = 0.95
+L566    STOP_SLIPPAGE_BUF            = 0.002
+L568    DAILY_LOSS_ALERT_PCT         = 0.02
+L569    SIZING_VALUE_ALERT_MULT      = 1.2
+L570    PROFIT_LOCK_FEE_MULT         = 1.5
+L571    PROFIT_LOCK_MIN_PCT          = 0.001
+L572    PROFIT_LOCK_STRICT           = False
+L573    COOLDOWN_TRDAYS              = 1
+L574    CONSEC_LOSS_PAUSE            = 3
+L575    LOSS_PAUSE_TRDAYS            = 3
+L579    PYRAMID_ON                   = True
+L580    PYRAMID_SPLITS               = 3
+L581    PYRAMID_RATIOS               = [0.4, 0.3, 0.3]
+L582    PYRAMID_HIGH_ZONE_PCT        = 0.2
+L583    PYRAMID_MIN_GAP_MIN          = 30
+L584    PYRAMID_MAX_PER_DAY          = 2
+L585    PYRAMID_ADD_MAX_UP_PCT       = 0.03
+L586    PYRAMID_MAX_WAIT_TRDAYS      = 5
+L587    PYRAMID_EXPIRE_MODE          = 'keep'
+L595    TRAP_ALERT_ON                = True
+L596    TRAP_LOSS_PCT                = 0.15
+L597    TRAP_LOSS_AMT_PCT            = 0.03
+L598    TRAP_HOLD_TRDAYS             = 20
+L600    TRAP_DEEP_LOSS_PCT           = 0.25
+L601    TRAP_DEEP_MIN_TRDAYS         = 2
+L602    TRAP_REBOUND_PCT             = 0.08
+L603    TRAP_EXIT_NEAR_PCT           = 0.01
+L604    TRAP_ALERT_COOLDOWN_TRDAYS   = 5
+L605    TRAP_MAX_ALERTS              = 3
+L606    TRAP_AUTO_HANDOFF            = True
+L607    TRAP_EXCLUDE_FROM_PNL        = True
+L608    TRAP_UNBAN_ON_EXIT           = True
+L609    TRAP_NOTIFY_WEBHOOK          = True
+L610    TRAP_TAG                     = '套牢移交'
+L611    MANUAL_ALERT_FILE            = 'zt_shrink_manual_alert.json'
+L614    RISK_CHECK_ON                = True
+L615    RISK_MIN_PRICE               = 2.0
+L616    RISK_MAX_DROP_7D             = 0.2
+L617    RISK_MAX_DROP_3D             = 0.15
+L618    RISK_MAX_DROP_5D             = 0.2
+L619    RISK_LOSS_CHECK              = True
+L624    RISK_LOSS_KEEP_RECORDS       = True
+L625    RISK_LOSS_OUTPUT_LIMIT       = 100
+L626    RISK_LOSS_MISSING_DEGRADE    = False
+L629    RISK_LOSS_PROBE_N            = 5
+L630    RISK_LOSS_AUTO_DOWNLOAD      = True
+L632    RISK_LOSS_RECHECK_SEC        = 60
+L633    PENDING_SETTLE_MAX_DAYS      = 5
+L637    RISK_LOSS_ALERT_PUSH         = True
+L640    BLACKLIST_FILE               = 'zt_shrink_blacklist.json'
+L641    ST_HIST_FILE                 = 'zt_shrink_st_hist.json'
+L643    RISK_EXCLUDE_ON              = True
+L645    RISK_EXCLUDE_FILE            = 'zt_shrink_risk_exclude.json'
+L646    RISK_EXCLUDE_MAX_AGE_DAYS    = 10
+L651    MA10_HOLD_ON                 = True
+L652    MA10_HOLD_BENCH              = 'close'
+L654    MA10_HOLD_FROM               = 1
+L655    MA10_MIN_BARS                = 10
+L665    ZT_LOW_HOLD_ON               = True
+L666    CONFIRM_ENTRY_ON             = False
+L672    CONFIRM_YIN_VOL_RATIO        = 0.6
+L673    CONFIRM_YANG_VOL_RATIO       = 1.5
+L674    CONFIRM_BREAK_MAX_DAYS       = 3
+L675    MA5_RECLAIM_ON               = False
+L681    MA5_RECLAIM_SHRINK_RATIO     = 0.7
+L682    MA5_RECLAIM_MAX_DAYS         = 5
+L689    HOT_SECTOR_ON                = False
+L690    HOT_SECTOR_TOPN              = 10
+L692    HOT_SECTOR_ZT_MIN            = 2
+L693    HOT_SECTOR_AUTOFIX_ON_FAIL   = True
+L694    HOT_SECTOR_FAIL_HARD         = False
+L700    RUN_LOG_FILE                 = 'zt_shrink_run.log'
+L705    NOTIFY_WEBHOOK               = ''
+L706    NOTIFY_ALLOWED_HOSTS         = ('qyapi.weixin.qq.com', 'oapi.dingtalk.com', 'sctapi.ftqq.com', 'sct.ftqq.com', 'www.pu...
+L707    NOTIFY_TIMEOUT               = 5
+L708    LOG_ENCODING                 = 'gbk'
+L709    LOG_FILE_ENCODING            = 'utf-8'
+L710    STATE_FILE                   = 'zt_shrink_state.json'
+L714    NAMES_CACHE_FLUSH_SEC        = 900
+L715    STRAT_TAG                    = 'ZSV'
+L718    PNL_TRACK_ON                 = True
+L719    FEE_ON                       = True
+L726    FEE_COMMISSION_RATE          = 8.41e-05
+L727    FEE_COMMISSION_MIN           = 5.0
+L728    FEE_STAMP_RATE               = 0.0005
+L729    FEE_TRANSFER_RATE            = 0.0
+L733    FEE_PROFILE                  = <表达式>
+L747    FEE_CBOND_SELL_RATE          = 5e-05
+L785    PNL_WIN_STEP                 = 0.03
+L786    PNL_LOSS_STEP                = 0.03
+L787    PNL_PF_STEP                  = 0.02
+L788    PNL_DAILY_REPORT_HM          = 1500
+L789    PNL_HALF_HOUR_REPORT_SEC     = 1800
+L790    PNL_BASE_ASSET               = 0.0
+L791    PNL_LEDGER_CSV               = 'zt_shrink_pnl.csv'
+L792    PNL_LEDGER_KEEP              = 500
+L798    G                            = <表达式>
+L4821   ORDER_STATUS_MAP             = {48: '未报', 49: '待报', 50: '已报', 51: '已报待撤', 52: '部成待撤', 53: '部撤', 54: '已撤', 55: '部成', 56...
+L9962   ACTIVE_ORDER_STATUS          = (48, 49, 50, 51, 52, 55)
+L12204  SENT_VERSION                 = '0.1.0'
+L12205  SENT_LAG_DAYS                = 1
+L12206  SENT_ZSCORE_WIN              = 60
+L12207  SENT_MIN_PERIODS             = 20
+L12208  SENT_WINSORIZE_LOWER         = 0.01
+L12209  SENT_WINSORIZE_UPPER         = 0.99
+L12210  SENT_CLIP_LIMIT              = 3.0
+L12211  SENT_EWMA_SPAN               = 5
+L12212  SENT_SENTIMENT_WEIGHTS       = [('z_advpct', 0.34), ('z_limit_up', 0.33), ('z_turnover', 0.33)]
+L12217  SENT_EVT_FRENZY_ADVPCT       = 2.0
+L12218  SENT_EVT_FRENZY_LIMITUP      = 2.0
+L12219  SENT_EVT_PANIC_ADVPCT        = -2.0
+L12220  SENT_REGIME_PANIC_LO         = -1.0
+L12225  SENT_REGIME_FRENZY_HI        = 1.5
+L12226  SENT_CORE_PARAMS             = {'gate_panic_th': -1.5, 'gate_frenzy_th': 1.8, 'enh_strength': 0.3, 'size_hot_scale': 0.2}
+L12232  SENT_REGIME_PARAMS           = {'panic': {'SHRINK_BUY_RATIO': 0.3, 'BUY_MIN_ELAPSED_MIN': 45}, 'neutral': {}, 'frenzy'...
+L12237  SENT_SIZE_HOT_TANH_K         = 1.0
+L12238  SENT_SIZE_MIN_MULT           = 0.7
+L12239  SENT_DEGRADE_ALERT_DAYS      = 3
+L12240  SENT_MONITOR_MAX_STALE_DAYS  = 5
+L12241  SENT_RETRY_SEC               = 300
+L12242  SENT_HIST_MAX                = 260
+L12243  SENT_BACKFILL_DAYS           = 400
+L12244  SENT_INDEX_SYMBOL            = '000001.SH'
+L12245  SENT_COVERAGE_MIN            = 0.9
+L12248  SENT_CARRY_LOG_SEC           = 1800
+L12249  SENT_CACHE_FILE              = 'zt_shrink_sent_cache.json'
+L12250  HEARTBEAT_FILE               = 'zt_shrink_heartbeat.json'
+L12251  HEARTBEAT_SEC                = 30
+L12252  HEARTBEAT_STALE_SEC          = 120
+L12253  HEARTBEAT_ALERT_SEC          = 300
+L12255  SENT_STATE                   = {}
+合计 284
+
+==========================================================================================
+【三】分节标题 (全大写#注释 / 含"====")
+==========================================================================================
+L241    # ==================== 账户与交易配置 ====================
+L247    # ---- 审计修复I7: 恢复模拟盘开关(DRY_RUN) ----
+L252    # ---- 审计修复I2: 滑点显式建模 ----
+L274    # ---- 审计修复I6: 多策略共用账户资金边界 ----
+L281    # ---- 审计修复G4: 运行日志文件持久化 ----
+L284    # ---- P3-01: 运行日志缓冲落盘(回调风暴下避免每行一次open/close) ----
+L293    # ---- P1-3修复(2026-10-03): 卖出结算兜底补记窗口 ----
+L297    # ---- P2-7修复(2026-10-03): 台账/账本CSV编码常量 ----
+L301    # ==================== 策略参数 ====================
+L348    # ---- 下单安全加固(2026-09-29审计修复): 卖出限价保护 / 委托价格夹取 / 卖出重试 ----
+L366    # ---- 组合硬约束(P0修复 2026-10-02): 弥补"绝不止损 + 熔断2个交易日自动恢复"在连续下跌中的保护空档 ----
+L405    # ---- 卖出侧"滞涨确认"(2026-10-02 借鉴: 高位放量滞涨才是真派发) ----
+L441    # ---- 交易时段判定参数(沪深A股, HHMM整型; 节假日由官方日历判定, 此处只管开收市时刻) ----
+L468    # ---- 数据质量闸门(P0-2/P0-3修复 2026-10-02, 用户定稿口径: 强提示 + 严重缺失才收紧) ----
+L478    # ---- 市值/流通市值选股过滤(V2.6.22 2026-10-12 用户提供): 候选股剔除不合适的市值, 默认关闭与原行为一致 ----
+L494    # ---- 盘中量能预估曲线(P1修复 2026-10-02): 原固定 sqrt 系数会系统性低估全日量 ----
+L504    # ---- 柜台空持仓确认(P0修复 2026-10-02) ----
+L510    # ==================== 资金与动态手数(单仓串行) ====================
+L548    # ---- 模拟成交概率(P2-01 2026-10-03) ----
+L558    # ---- 模拟部分成交(P1-1修复 2026-10-08) ----
+L578    # ==================== 分批建仓(金字塔低吸, 降低一次性买在当日高位的风险) ====================
+L589    # ==================== 套牢仓位人工介入(提醒 -> 冻结移交 -> 剔除 -> 释放持仓名额与资金额度) ====================
+L613    # ==================== 避雷风险排查 ====================
+L648    # ==================== 趋势结构过滤(方案A一期: 涨停后回调不破10日线) ====================
+L684    # ==================== 热门板块过滤(方案A一期: 仅买当日热门板块内个股) ====================
+L697    # ==================== 通知与记录 ====================
+L717    # ==================== 盈亏账本与提示 ====================
+L720    # ---- 券商费率(已按实际开户券商校准; 本策略只交易沪深A股, 仅"股票"档生效) ----
+L730    # ---- 真实费率配置表(V2.6.69新增): 按券商报价逐品种写实, 供 fee_buy/fee_sell 按品种选用 ----
+L780    # ---- 其它品种费率(本策略不交易, 已按券商报价写入配置表, 见 fee_profile) ----
+L794    # ==================== 全局状态容器(普通全局变量, 不挂ContextInfo) ====================
+L1006   # ==================== 本地文件(状态/台账/日志) ====================
+L1579   # ==================== 通用工具 ====================
+L1869   # ==================== V2.6.30: 实时行情获取层(B订阅 + C兜底) ====================
+L2507   # ==================== 盈亏账本与提示(已实现/未实现) ====================
+L3832   # ==================== 资金基准 / 动态手数 / 单仓串行 ====================
+L4421   # ==================== 套牢仓位人工介入(提醒/冻结移交/剔除/释放名额与资金额度) ====================
+L4798   # ==================== 买入去重层 ====================
+L4825   # ---- 每日买卖笔数上限(纸面/实盘完全分离) ----
+L5271   # ---- 优先级 1: 本地缓存 trading_calendar.json (download_trading_calendar.py 生成) ----
+L5307   # ---- D2(2026-10-03): 每年【第一次运行本策略】提示下载当年度最新交易日/非交易日列表 ----
+L5346   # ---- 优先级 2: QMT C.get_trading_dates(官方接口) ----
+L5363   # ---- 优先级 3: 上证指数日线兜底(指数有bar就有交易日) ----
+L5961   # ==================== 避雷风险排查层 ====================
+L6321   # -*- coding: utf-8 -*-
+L6730   # ===== 优先: QMT 内置策略接口 (2026-10-08 v2, 按迅投文档修正) =====
+L7309   # ==================== 趋势结构过滤(方案A一期: 10日线不破) ====================
+L7338   # ==================== 战法借鉴增强(判定函数) ====================
+L7409   # ==================== 热门板块过滤(方案A一期: 仅买当日热门板块) ====================
+L7563   # ==================== 选股层(规则1+规则2窗口) ====================
+L8082   # ==================== 账户层 ====================
+L8173   # ==================== 分批建仓(金字塔低吸) ====================
+L8937   # ---- 到期处理: 超出最长等待 ----
+L8939   # ---- [2026-10-20 V2.6.102] 到期分级: 赢家给机会(延长等待), 输家不补仓 ----
+L9017   # ---- 常规批次: 价格位置 + 追高 + 间隔 + 当日批次 + 现金 ----
+L9020   # ---- [2026-10-20 V2.6.101] 加仓 <-> 卖出 互锁: 加仓前先看离"卖出"还有多远 ----
+L9159   # ==================== 交易层(passorder) ====================
+L9558   # ===== 铁律: 亏损(含持平)持仓绝对禁止卖出(不可绕过的最终闸门) =====
+L9960   # ==================== 信号与轮询(规则2买点+规则3卖点) ====================
+L9961   # ==================== 实盘买入委托超时管理(方案三) ====================
+L10037  # ---- 已超时: 查柜台委托状态 ----
+L10354  # ---------- 卖出检查 ----------
+L10631  # ---------- 买入检查 ----------
+L10817  # ---- 战法借鉴②③: 确认式进场触发(默认关, 与缩量低吸并存; 其余风控闸门全部保留) ----
+L10906  # ---- 动态手数(四级约束 + 取整降级); 关闭时退回固定手数 ----
+L10937  # ---- 分批建仓: 首笔也先做"当日价格位置"过滤, 高位区不建仓 ----
+L10984  # ==================== 交易回调(框架自动调用, 需init里set_account) ====================
+L11408  # ============================================================
+L11411  # ============================================================
+L11519  # ==================== 框架入口 ====================
+L11958  # ============================================================
+L11961  # ============================================================
+L12186  # ===== 情绪模块(单文件合并) BEGIN =====
+L12187  # ============================================================================
+L12189  # ----------------------------------------------------------------------------
+L12198  # ----------------------------------------------------------------------------
+L12203  # ---- 情绪常量(全部 SENT_ 前缀, 不进入宿主 param_fingerprint) ----
+L12275  # ---------------------------------------------------------------------------
+L12296  # ---------------------------------------------------------------------------
+L12544  # ---------------------------------------------------------------------------
+L12546  # ---------------------------------------------------------------------------
+L12817  # ---------------------------------------------------------------------------
+L12819  # ---------------------------------------------------------------------------
+L12836  # ---------------------------------------------------------------------------
+L12838  # ---------------------------------------------------------------------------
+L12847  # ---- V2.6.76(第十二轮审计问题2): 真正的取数工作移交后台线程, 主线程立即返回 None ----
+L13151  # ---- V2.6.106(方案9): 覆盖口径从'本轮'改为'跨轮累积' ----
+L13343  # --- P1 纯解释器: 30 万次整数运算 ---
+L13351  # --- P2 贴近提取段: 10 万次 dict 读写 ---
+L13360  # --- P3 时钟调用本身是否被插桩 ---
+L13712  # ---- V2.6.106(方案9) 累积收尾: 覆盖口径从'本轮/全市场'改为'累积/全市场' ----
+L13784  # ---------------------------------------------------------------
+L13796  # ---------------------------------------------------------------
+L14264  # ---------------------------------------------------------------------------
+L14266  # ---------------------------------------------------------------------------
+L14398  # ---------------------------------------------------------------------------
+L14400  # ---------------------------------------------------------------------------
+L14570  # ===== 情绪模块(单文件合并) END =====

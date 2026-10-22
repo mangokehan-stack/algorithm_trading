@@ -1,0 +1,47 @@
+=== A 历史修复点逐项复核 ===
+  PASS V2.6.136/137 累积池 v>=2 分支还原为 dict
+  PASS V2.6.137 旧的 list 形状 [_cc,_pp] 已消失
+  PASS V2.6.138 抛点日志(extract_tb 末三帧)
+  PASS V2.6.138 坏样本按只兜底 _nbad3
+  PASS V2.6.138 异常轮告警不编造读数
+  PASS V2.6.138 isinstance(_row3, dict) 守卫
+  PASS V2.6.85 VERSION 排除出参数指纹
+  PASS V2.6.108 世代自噬加锁 _GEN_DOWN
+  PASS V2.6.88 心跳启动自证
+  PASS V2.6.88 换手率自算兜底 _float_share
+  PASS V2.6.91 世代判定三条件
+  PASS V2.6.106 累积池 _SENT_ACC
+  PASS V2.6.149 缓存覆盖率日志
+  PASS V2.6.149 ratio 保留 1.0 + 说明注释
+
+=== B 铁律 AST 复核 ===
+  stop_order 直接调用 = 0 ; 属性引用 = 0
+  NEVER_STOP_LOSS = True
+
+=== C 卖出铁律闸门 ===
+  PASS is_at_loss 无条件拦截
+  PASS 扣费净利无条件拦截
+  PASS 解套保护价 floor
+  PASS 亏损禁卖结构化日志
+  PASS 扣费不为正结构化日志
+
+=== D 重复下单防线 ===
+  PASS 发单前 critical 落盘(买入首笔)
+  PASS 在途量先于 passorder 设置
+  PASS 异常后实时查柜台(_o = buy_order_obj(s, None))
+  PASS 撤单宽限期 CANCEL_CONFIRM_GRACE_SEC
+  PASS 委托归属三重判定 _own_order
+  PASS 成交幂等键 _deal_key
+  PASS 当日买入 codes 重入守卫
+  PASS 在途占持仓名额(Q2)
+
+=== E 情绪缓存路径放行门槛 ===
+  当前门槛: len(_gh) < 100 只即放行聚合
+  cover["ratio"] 在缓存路径被写死为 1.0: True
+  真实覆盖率只进日志: True
+
+=== F 移交后释放股票名额与资金额度 ===
+  PASS 持有名额排除 is_handoff
+  PASS 资金占用排除 is_handoff
+  FAIL 移交名义额度不回填(trap_credit_left 已删)
+  is_handoff 定义: 有

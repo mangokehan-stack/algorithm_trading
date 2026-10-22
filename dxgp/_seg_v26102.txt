@@ -1,0 +1,45 @@
+            continue
+        # ---- 到期处理: 超出最长等待 ----
+        waited = held_trd_days(h.get('plan_date', ''))
+        # ---- [2026-10-20 V2.6.102] 到期分级: 赢家给机会(延长等待), 输家不补仓 ----
+        #  老毛病: 到期不分好坏一视同仁 —— 还在赚钱的票(只是这几天一直没回调到低位)
+        #  被硬砍掉剩余仓位, 亏钱的票反而可能被 fill 一次性补齐(越亏越补, 仓位越重越难翻身)
+        #  改法: 浮盈(现价 > 持仓成本) -> 等待期 +3 个交易日, 多给几次回调机会;
+        #          浮亏(现价 <= 持仓成本) -> 到期就作废剩余计划, 且绕开 fill(绝不补仓)。
+        #  只决定"还等不等 / 补不补", 不碰卖出判据、不碰止损。
+        _ex_cvol = pos_vol(h)
+        _ex_cost = (pos_cost(h) / _ex_cvol) if _ex_cvol > 0 else _f(h.get('buy_price', 0) or 0)
+        _ex_win = _ex_cost > 0 and lp > _ex_cost
+        _ex_wait = (PYRAMID_MAX_WAIT_TRDAYS + 3) if _ex_win else PYRAMID_MAX_WAIT_TRDAYS
+        if PYRAMID_MAX_WAIT_TRDAYS > 0 and waited > _ex_wait:
+            if not _ex_win:
+                # 输家: 到期立即放弃, 不补仓(fill 路线也绕开)
+                if h.get('pyr_note_date') != G.today:
+                    h['pyr_note_date'] = G.today
+                    log(disp(s), '加仓到期放弃(输家): 已等%d个交易日, 现价%.2f<=成本%.2f(浮亏), '
+                           '剩余%d股不再补仓, 剩余计划作废(票继续持有, 绝不止损)'
+                           % (waited, lp, _ex_cost, int(remain)))
+                h['plan_done'] = True
+                continue
+            if PYRAMID_EXPIRE_MODE == 'fill' and remain >= 100:
+                # [P1-2 FIX 2026-10-16] 超期fill路径补齐三重闸门(原只检查现金)
+                # 原fill路径: 超过PYRAMID_MAX_WAIT_TRDAYS后不看价位一次性补足,
+                # 只验证了现金够不够, 跳过了正常路径的
+...
+                    log(disp(s), "[超期补足] 可用资金不足, 放弃fill(%d股, 需%.0f元)" % (_fill_vol, lp * _fill_vol))
+            if h.get('pyr_note_date') != G.today:
+                h['pyr_note_date'] = G.today
+                if PYRAMID_EXPIRE_MODE != 'fill' or remain < 100:
+                    log(disp(s), '分批等待超%d个交易日(已%d日), 放弃剩余%d股(计划%d股/已买%d股), '
+                           '已买部分继续按原规则持有'
+                           % (PYRAMID_MAX_WAIT_TRDAYS, waited, remain,
+                              int(h.get('plan_vol', 0) or 0), pos_vol(h)))
+            h['plan_done'] = True
+            continue
+        elif (PYRAMID_MAX_WAIT_TRDAYS > 0 and _ex_win and waited > PYRAMID_MAX_WAIT_TRDAYS
+              and h.get('pyr_ext_note_date') != G.today):
+            # 赢家: 已过原等待期但尚在延长期内, 每天提醒一次
+            h['pyr_ext_note_date'] = G.today
+            log(disp(s), '加仓等待延长(赢家): 已等%d个交易日, 现价%.2f>成本%.2f(浮盈), '
+                   '等待期延至%d个交易日继续等回调(未回调则不补仓)'
+                   % (waited, lp, _ex_cost, _ex_wait))

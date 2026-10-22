@@ -1,0 +1,31 @@
+{"ts": 1792225569.907705, "type": "sentiment_extreme", "msg": "002142.SZ 情绪极端(panic)：EWMA=0.19，情绪门拦截买入=True，仓位缩放=0.50"}
+{"ts": 1792225624.2535248, "type": "sentiment_extreme", "msg": "002142.SZ 情绪极端(euphoric)：EWMA=0.86，情绪门拦截买入=True，仓位缩放=1.00"}
+{"ts": 1792225726.4340403, "type": "sentiment_extreme", "msg": "002142.SZ 情绪极端(euphoric)：EWMA=0.80，情绪门拦截买入=True，仓位缩放=1.00"}
+{"ts": 1792225811.273023, "type": "sentiment_extreme", "msg": "002142.SZ 情绪极端(euphoric)：EWMA=0.80，情绪门拦截买入=True，仓位缩放=1.00"}
+{"ts": 1792374231.2682862, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792386033.535966, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792387320.5886037, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792387590.6059868, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792389678.6416328, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792390554.6629243, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792391097.661842, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：近20日均量261075手 → 单笔上限261075股；若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792402006.9200492, "type": "particip_zero_vol", "msg": "002142.SZ 近20日已收盘K线均量为0（疑似数据源缺量/零价清洗剔光）；本笔买入跳过参与率闸门，由资金硬上限等其余闸门把关，请人工核对QMT日线数据"}
+{"ts": 1792459892.3346105, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 262563 手 → 单笔上限 262563 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792461530.6440792, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 262563 手 → 单笔上限 262563 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792555485.7073267, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792556574.7784584, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792558887.5485086, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 266974 手 → 单笔上限 266974 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792558887.5791063, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792560525.578597, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792561411.138695, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_pending.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792561455.593973, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 266974 手 → 单笔上限 266974 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792561455.619528, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792561530.6062038, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 266974 手 → 单笔上限 266974 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792561530.631664, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792561914.6202054, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_multi_state.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792563106.5828753, "type": "persist_fail", "msg": "json_truncate 写入 gf_native_pending.json 失败: tmp JSON 解析失败，已放弃替换(保留原文件)"}
+{"ts": 1792563153.6305857, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 266974 手 → 单笔上限 266974 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792563741.750336, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 266974 手 → 单笔上限 266974 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792632690.6880226, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 262563 手 → 单笔上限 262563 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792645287.9901335, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 262563 手 → 单笔上限 262563 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}
+{"ts": 1792646980.0108373, "type": "particip_unit_check", "msg": "002142.SZ 参与率单位自检：闸门取近20日成交量中位数 262563 手 → 单笔上限 262563 股；若 QMT 日线 volume 单位非「手」请立即核对（否则参与率闸门被放大100倍）"}

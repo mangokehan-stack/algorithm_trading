@@ -1,0 +1,44 @@
+状态文件存在, hold 共 2 只
+  002226.SZ | fill_vol=2200 fill_sum=11535.0 fee=5.0 cost_total=11540.0 order_cnt=None buy_price=5.243181818181818
+  601595.SH | fill_vol=1600 fill_sum=44910.0 fee=5.45 cost_total=44915.45 order_cnt=None buy_price=28.06875
+  002226.SZ 买入成交记录 3 条:
+     vol=900 price=5.27 amount=4743.0 fee=5.0 time='2026-10-14 10:02:14' order_id=None
+     vol=700 price=5.28 amount=3696.0 fee=5.0 time='2026-10-14 10:32:44' order_id=None
+     vol=600 price=5.16 amount=3096.0 fee=5.0 time='2026-10-15 09:31:15' order_id=None
+  601595.SH 买入成交记录 7 条:
+     vol=100 price=28.02 amount=2802.0 fee=5.03 time='2026-10-21 13:51:54' order_id=None
+     vol=100 price=28.02 amount=2802.0 fee=5.03 time='2026-10-21 13:51:54' order_id=None
+     vol=700 price=28.02 amount=19614.0 fee=5.2 time='2026-10-21 13:51:54' order_id=None
+     vol=100 price=28.12 amount=2812.0 fee=5.03 time='2026-10-21 14:21:57' order_id=None
+     vol=300 price=28.12 amount=8436.0 fee=5.08 time='2026-10-21 14:21:57' order_id=None
+     vol=100 price=28.12 amount=2812.0 fee=5.03 time='2026-10-21 14:21:57' order_id=None
+     vol=200 price=28.16 amount=5632.0 fee=5.06 time='2026-10-21 14:21:57' order_id=None
+
+=== def is_own_position  L2806 ===
+L2806: def is_own_position(h):
+L2807:     """判断一条持仓记录是否属于【本策略自身】持仓。
+L2808:     本策略买入并持有的头寸会带 managed=True; 对账方向A会把柜台所有持仓(含其他策略/手工持仓)
+L2809:     补录进 hold 并打 reconciled=True 标记(孤儿仓), 本策略无权买卖也绝不应计入自身持仓上限。
+L2810:     判别: 显式 managed=True 优先; 否则以"非reconciled孤儿仓"判定(方向A是唯一写入 reconciled=True 的地方)。"""
+L2811:     if h.get('managed'):
+L2812:         return True
+
+=== def pos_vol  L2607 ===
+L2607: def pos_vol(h):
+L2608:     """持仓股数: 实盘以成交回报累计(fill_vol)为准, 模拟用委托量;
+L2609:     重审20261005(P2-4): h为None/非dict时返回0(健壮性, 不让工具函数崩溃扩散到调用方)"""
+L2610:     if not isinstance(h, dict):
+L2611:         return 0
+
+=== def _f(  L1700 ===
+L1700: def _f(x):
+L1701:     """安全转float, NaN/异常归0"""
+L1702:     try:
+L1703:         v = float(x)
+L1704:         if not math.isfinite(v):
+L1705:             return 0.0
+
+=== def _round2  L2244 ===
+L2244: def _round2(x):
+L2245:     """交易所规则: 四舍五入到分(不用Python的银行家舍入)"""
+L2246:     return math.floor(x * 100.0 + 0.5) / 100.0

@@ -1,0 +1,117 @@
+=== 命中位置 ===
+order_cnt                 4 处  L5,L8483,L8484,L11353
+_order_fee_delta          6 处  L5,L2537,L2577,L2583,L2598,L3084
+order_fee_acc             2 处  L2558,L11350
+n_order                   9 处  L2572,L2578,L2587,L2589,L2594,L2604,L8485,L9815,L9852
+存量持仓费用口径校准                3 处  L118,L8460,L8495
+
+===== def _order_fee_delta (L2537..L2576) =====
+L2537: def _order_fee_delta(order_id, amount, calc):
+L2538:     """交易费用按【委托单】归并 —— 一张委托只算一次最低佣金起收(V2.6.156)。
+L2539: 
+L2540:     柜台会把一张委托拆成多笔成交回报(2026-10-21 601595 实测: 1张委托900股被拆成
+L2541:     100+100+700 三笔成交回报, 同一个 OrderID)。若每笔成交各自 max(金额x费率, 最低佣金),
+L2542:     则 5 元起收会被重复计 3 次, 合计记账 15.26 元, 而券商按委托单只收 5.00 + 过户 0.25 = 5.25 元。
+L2543: 
+L2544:     做法: 按 OrderID 记住该委托单累计成交金额与本单已计入费用, 返回
+L2545:         本笔费用 = calc(该单累计成交金额) - 该单已计入费用
+L2546:     于是整张委托单的费用总额恰好等于 calc(该单成交总金额) —— 与单笔口径共用同一个 calc,
+L2547:     费率公式只有一份, 将来调费率不会漏改。'已计入费用'存的是四舍五入后的值,
+L2548:     每笔的进位误差自动滚入下一笔, 三笔合计正好压在 5.25 元, 不产生逐笔舍入累积。
+L2549: 
+L2550:     order_id 为空(认不出是哪张委托单)时直接返回 calc(amount), 与旧版逐字一致。
+L2551:     calc: 单笔费用计算函数, 如 lambda a: fee_buy(a, code) —— 不会再进本函数(order_id为空), 无递归。
+L2552:     """
+L2553:     _oid = str(order_id or '').strip()
+L2554:     if not _oid or amount <= 0:
+L2555:         return calc(amount)
+L2556:     _k = '%s|%s' % (G.today or '', _oid)
+L2557:     try:
+L2558:         _acc = G.state.setdefault('order_fee_acc', {})
+L2559:     except Exception:
+L2560:         return calc(amount)
+L2561:     _rec = _acc.get(_k) or {}
+L2562:     _amt = _f(_rec.get('amt', 0.0)) + amount          # 该委托单累计成交金额
+L2563:     _due = calc(_amt)                                # 该单累计应计费用(佣金起收只在此算一次)
+L2564:     _paid = _f(_rec.get('fee', 0.0))                 # 该单此前已计入费用(四舍五入后的值)
+L2565:     _this = _round2(_due - _paid)
+L2566:     _acc[_k] = {'amt': _amt, 'fee': _round2(_paid + _this), 'ts': time.time()}
+L2567:     if len(_acc) > 2000:                             # 防长跑积累: 只清最旧 500 条
+L2568:         for _ok in sorted(_acc, key=lambda x: _f((_acc.get(x) or {}).get('ts', 0.0)))[:500]:
+L2569:             _acc.pop(_ok, None)
+L2570:     return _this
+L2571: 
+L2572: def fee_buy(amount, code='', order_id='', n_order=1):
+L2573:     """买入费用(V2.6.69): 按品种取费率 —— 佣金(不足最低按最低) + 过户费(仅沪市股票双边)。
+L2574:     品种由 _prod_of(code) 显式品种键识别: 股票/ETF/港股通/可转债/逆回购各按 FEE_PROFILE 报价。
+L2575:     本策略只交易沪深A股, 行为与旧版完全一致(万0.841, 5元起收)。
+L2576: 
+
+===== 存量校准实现 (L8434..L8500) =====
+L8434:                             h['unreg_manual_add'] = {'date': G.today, 'from': s_vol, 'to': c_vol}
+L8435:                             _recon_changed = True
+L8436:                             log('[安全][注意] %s 柜台股数增加%d→%d(疑手工加仓), '
+L8437:                                 '无 manual_fill/manual_avg_cost 登记, 仅同步股数、不覆盖成本基准 '
+L8438:                                 '(均价%.2f/含费总成本%.2f保留); 如需校准请在状态文件登记 '
+L8439:                                 'manual_fill 或 manual_avg_cost' % (code, s_vol, c_vol, _pb, _oc))
+L8440:                             try:
+L8441:                                 notify_enqueue('[安全][注意] %s 检测到未登记手工加仓(股数%d→%d), '
+L8442:                                                '成本基准不可信, 已【暂停该股自动卖出】; 请在状态文件登记 '
+L8443:                                                'manual_fill/manual_avg_cost 后恢复(登记前策略只持有不卖出)'
+L8444:                                                % (disp(code), s_vol, c_vol))
+L8445:                             except Exception:
+L8446:                                 pass
+L8447:                 else:
+L8448:                     # 手工减仓(或柜台部分卖出状态未跟上): 均价不变, 成本按比例缩减
+L8449:                     _ratio = c_vol / float(s_vol) if s_vol > 0 else 0.0
+L8450:                     _ncost = _round2(_oc * _ratio)
+L8451:                     h['buy_vol'] = c_vol
+L8452:                     h['fill_vol'] = c_vol
+L8453:                     h['cost_total'] = _ncost
+L8454:                     h['fee'] = _round2(_fee0 * _ratio)
+L8455:                     h['fill_sum'] = _round2(_f(h.get('fill_sum', 0.0)) * _ratio)
+L8456:                     _recon_changed = True
+L8457:                     log('[安全] %s 手工减仓对账: 股数%d→%d, 均价%.2f不变, '
+L8458:                         '含费总成本%.2f→%.2f(按比例%.0f%%缩减)' % (
+L8459:                             code, s_vol, c_vol, _pb, _oc, _ncost, _ratio * 100))
+L8460:         # 方向E(2026-10-19 V2.6.72, 用户确认修复): 存量持仓费用口径校准 —— V2.6.71前买入的
+L8461:         # 持仓沿用旧版粗估FEE_RATE_EST(0.15%)记账, 比真实佣金(股票万0.841/最低5元)高约17倍,
+L8462:         # 导致 cost_total 虚高(实测两只持仓合计虚高约21元), 抬高了"扣费净利为正才卖"的门槛,
+L8463:         # 可能造成该卖不卖。此处按真实费率 fee_buy 重算 fee 与 cost_total, 保持
+L8464:         # fill_sum+fee=cost_total 恒等; 只改成本记录、不触发任何交易; 幂等(与实际一致则不改)。
+L8465:         # 含已移交仓 —— 使组合熔断"真实权益(含已移交套牢仓浮亏)"口径更准确。
+L8466:         _fee_fixed = []
+L8467:         _fee_fix_sum = 0.0
+L8468:         for _code, _h in list(hold.items()):
+L8469:             if not is_own_position(_h):
+L8470:                 continue
+L8471:             _ev = int(_f(_h.get('fill_vol', 0)) or 0)
+L8472:             if _ev <= 0:
+L8473:                 _ev = int(pos_vol(_h))
+L8474:             if _ev <= 0:
+L8475:                 continue
+L8476:             _fs = _f(_h.get('fill_sum', 0.0))
+L8477:             if _fs <= 0:
+L8478:                 _fs = _f(_h.get('buy_price', 0.0)) * _ev
+L8479:             if _fs <= 0:
+L8480:                 continue
+L8481:             _fe_old = _f(_h.get('fee', 0.0))
+L8482:             # V2.6.156: 按该仓买过的委托单张数估算起收, 防把多张委托的起收又抹回一张;
+L8483:             # 旧记录无 order_cnt 字段时默认 1 张, 与 V2.6.72 原口径完全一致
+L8484:             _n_ord = max(1, int(_f(_h.get('order_cnt', 0)) or 0))
+L8485:             _fe_new = fee_buy(_round2(_fs), _code, n_order=_n_ord)
+L8486:             if abs(_fe_new - _fe_old) > 0.005:
+L8487:                 _ct_old = _f(_h.get('cost_total', 0.0))
+L8488:                 _h['fee'] = _round2(_fe_new)
+L8489:                 _h['cost_total'] = _round2(_fs + _fe_new)
+L8490:                 _recon_changed = True
+L8491:                 _fee_fixed.append('%s: fee %.2f->%.2f, cost_total %.2f->%.2f'
+L8492:                                   % (_code, _fe_old, _fe_new, _ct_old, _h['cost_total']))
+L8493:                 _fee_fix_sum += (_ct_old - _f(_h.get('cost_total', 0.0)))
+L8494:         if _fee_fixed:
+L8495:             log('[安全] 存量持仓费用口径校准(V2.6.72): 重算%d只, 旧粗估0.15%%->真实费率, 合计成本调整%.2f元 | %s'
+L8496:                 % (len(_fee_fixed), _fee_fix_sum, '; '.join(_fee_fixed)))
+L8497:         # 方向A2: 在途买单补录(P1-2) —— 状态文件丢失/损坏重启时, 柜台可能恰有一笔
+L8498:         # 未成交的本策略买单(POSITION查不到、hold为空): 不补录则同一标的可再发一单,
+L8499:         # 双倍占资且突破单票/持仓上限。
+L8500:         # P2-1修复: ORDER 已在上方锁外查询(ords)

@@ -1,0 +1,97 @@
+===== B1 百分号格式化：占位符个数 vs 实参个数 =====
+检查了全部百分号格式化表达式，可疑 0 处
+
+===== B2 str.format 占位符与实参 =====
+可疑 0 处
+
+===== B3 return 之后仍有语句（真死代码） =====
+命中 0 处
+
+===== B4 除法：分母非常量且无零保护 =====
+全部除法 153 处，其中分母是字面量的 36 处
+
+===== B5 关键变量被当作布尔量判断 =====
+命中 4 处
+  L2650   not DYN_PROFIT_FEE | if not DYN_PROFIT_FEE:
+  L3680   not FEE_ON | if not FEE_ON:
+  L10790  not _vol_sell_ok | elif not _vol_sell_ok:
+  L13013  not vals | if not vals:
+
+===== B6 浮点相等比较 =====
+命中 2 处
+  L3918   SIZE_EQUITY_MODE == 'initial'
+  L3927   SIZE_EQUITY_MODE == 'high_water'
+
+===== B7 切片 [1:] / [:-1] / [-N:] 使用点 =====
+共 7 处
+  L6974   log('[财务数据] %s 三层取数均失败: %s' % (s, ' | '.join(_errs[-4:])))
+  L7389   recent = comp[-7:]
+  L7397   recent3 = comp[-3:]
+  L7405   recent5 = comp[-5:]
+  L7626   comp = rows[:-1] if rows[-1]['date'] == G.today else rows
+  L7819   comp = rows[:-1] if dates[-1] == G.today else rows
+  L14483  for _tb in _tbs[-3:]])
+
+===== B8 rows[0] / rows[-1] 出现密度 =====
+共 6 处（不逐一判断，交由人工核）
+  L3974   last = rows[-1][2]
+  L3988   r = rows[-1]
+  L7052   if rows and rows[-1]:
+  L7053   return _f(rows[-1].get('close'))
+  L7626   comp = rows[:-1] if rows[-1]['date'] == G.today else rows
+  L14599  'date': rows[-1]['date'],
+
+===== B9 except 吞异常后返回的"正常值" =====
+可疑 53 处
+  _auto_risk_exclude L6828   返回 False
+  _blocked_ip L1515   返回 True
+  _df_to_rows L1669   返回 {}
+  _f L1726   返回 0.0
+  _find_manual_sell_deal L3203   返回 []
+  _float_market_cap_yi L7045   返回 None
+  _float_share L7100   返回 0.0
+  _gen_superseded L12016  返回 False
+  _is_bar_fresh L1891   返回 False
+  _is_today_bar L1796   返回 False
+  _ledger_today_pnl L3458   返回 0.0
+  _normalize_ts L1860   返回 0.0
+  _own_hold_count L8246   返回 0
+  _refresh_ticks L2259   返回 {}
+  _risk_ex_sig_of L6227   返回 None
+  _safe_rollback_placeholder L2787   返回 False
+  _sent_acc_path L12511  返回 ''
+  _sent_cache_load L13197  返回 {}
+  _sent_fetch_md_batch L13344  返回 {}
+  _sent_fetch_sync L14491  返回 None
+  _sent_fresh_enough L14629  返回 True
+  _sent_use_last_good L13308  返回 False
+  _set_buy_ctx L8852   返回 False
+  _sim_deal L11333  返回 False
+  _subscribe_quotes L1975   返回 0
+  _tick_unit_blocked L5932   返回 False
+  _ts_to_date L7135   返回 ''
+  abs_cap_left L2925   返回 0.0
+  buy_stock L9592   返回 None
+  buy_stock L9665   返回 None
+  cancel_buy_order L10168  返回 False
+  cancel_sell_order L10011  返回 False
+  detect_tick_volume_unit L5898   返回 None
+  gen_announce L11976  返回 0.0
+  held_trd_days L2523   返回 0
+  inst_name L2375   返回 ''
+  is_st_name L2387   返回 False
+  is_strategy_target L5230   返回 True
+  market_tide_check L4268   返回 True
+  market_tide_check L4274   返回 False
+  name_known L2401   返回 False
+  pause_until L4187   返回 ''
+  place_sell_order L9803   返回 False
+  place_sell_order L9922   返回 False
+  probe_account L2440   返回 False
+  pyramid_add L8912   返回 0.0
+  pyramid_add L8961   返回 0.0
+  query_order_status L5078   返回 ''
+  risk_excluded L6850   返回 ''
+  save_state L1365   返回 False
+  sent_fetch_all_data L13139  返回 None
+  trap_gap_ok L4605   返回 True

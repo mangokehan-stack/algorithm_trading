@@ -1,0 +1,66 @@
+{
+ "schema": 1,
+ "generated_at": "2026-10-22 00:59:22",
+ "asof": "20261022",
+ "window_days": 45,
+ "counts": {
+  "st": 1,
+  "lift": 1,
+  "decrease": 1,
+  "loss": 1,
+  "ann": 1
+ },
+ "total_stocks": 5,
+ "stocks": {
+  "000001.SZ": {
+   "tags": [
+    "st"
+   ],
+   "reasons": [
+    "ST/退市风险(名称:*ST样例)"
+   ]
+  },
+  "600000.SH": {
+   "tags": [
+    "lift"
+   ],
+   "reasons": [
+    "临近解禁(2026-10-22 首发原股东限售股份 12.0亿)"
+   ]
+  },
+  "000002.SZ": {
+   "tags": [
+    "decrease"
+   ],
+   "reasons": [
+    "大股东减持(2026-10-22 某投资 1.00%)"
+   ]
+  },
+  "600519.SH": {
+   "tags": [
+    "loss"
+   ],
+   "reasons": [
+    "业绩预亏(2026-10-22公告, 报告期2026-10-22)"
+   ]
+  },
+  "002142.SZ": {
+   "tags": [
+    "ann"
+   ],
+   "reasons": [
+    "立案(2026-10-22 关于收到立案告知书的公告)"
+   ]
+  }
+ },
+ "sources": {
+  "st": {
+   "ok": true,
+   "n": 1,
+   "self_test": true
+  }
+ },
+ "errors": [],
+ "note": "--self-test 样例文件, 仅用于验证策略侧解析, 请勿用于实盘",
+ "self_test": true
+}

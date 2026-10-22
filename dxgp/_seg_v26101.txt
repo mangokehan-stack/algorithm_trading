@@ -1,0 +1,40 @@
+8439|             continue
+8440|         # ---- 常规批次: 价格位置 + 追高 + 间隔 + 当日批次 + 现金 ----
+8441|         pos = day_pos(t, lp)
+8442|         note = h.get('pyr_note_date')
+8443|         # ---- [2026-10-20 V2.6.101] 加仓 <-> 卖出 互锁: 加仓前先看离"卖出"还有多远 ----
+8444|         #  老毛病: 加仓只看"价格位置/追高/间隔", 卖出只看"放量/换手/到期", 两边互不通气,
+8445|         #  于是会出现"刚加完一批, 下一轮就被放量止盈卖掉": 白付一趟佣金+过户费+印花税,
+8446|         #  还把成本抬高(成本一高, 止盈线又跟着抬高, 反而更难卖)。此处用卖出侧同一把尺子
+8447|         #  (与卖出循环 est = vol * _tick_to_daily_scale() / k 完全同口径) 先量一次距离。
+8448|         #  只做两件事: 离卖出太近 -> 今天不加(明天量缩还能加); 已经能赚钱卖 -> 末批作废。
+8449|         #  绝不触发任何卖出、也绝不是止损(NEVER_STOP_LOSS 未动, 全程无止损单逻辑)。
+8450|         _il_vol = _f(t.get('volume'))
+8451|         _il_k = _proj_vol_ratio(float(_day_min))
+8452|         _il_est = (_il_vol * _tick_to_daily_scale() / _il_k) if _il_k > 0 else 0.0
+8453|         _il_base = _f(h.get('base_vol', 0) or 0)
+8454|         _il_line = sent_param('EXPAND_SELL_RATIO', EXPAND_SELL_RATIO) * SELL_TOL * (
+8455|             EARLY_SELL_VOL_MULT if _day_min < EARLY_SELL_END_MIN else 1.0)
+8456|         _il_ratio = (_il_est / _il_base) if _il_base > 0 else 0.0
+8457|         # ① 离放量止盈只差 15%% 以内(=线 x 0.85, 早盘同理乘 1.5) -> 今天不再加仓
+8458|         if (_il_base > 0 and _day_min >= EARLY_SELL_BLOCK_MIN
+8459|                 and _il_ratio >= _il_line * 0.85):
+8460|             if note != G.today:
+8461|                 h['pyr_note_date'] = G.today
+8462|                 log(disp(s), '加仓%d/%d批暂缓: 预估全日量已达基准%.2f倍(放量止盈线%.2f倍, 已到%.0f%%), '
+8463|                        '离卖出很近, 今天不再加仓(非止损, 量缩后可再补)'
+8464|                        % (idx + 1, len(batches), _il_ratio, _il_line,
+8465|                           (_il_ratio / _il_line * 100) if _il_line > 0 else 0.0))
+8466|             continue
+8467|         # ② 末批与止盈联动: 只剩最后一批时, 若已能扣费净赚卖出 -> 末批作废, 不再补
+8468|         _il_cvol = pos_vol(h)
+8469|         _il_cost = (pos_cost(h) / _il_cvol) if _il_cvol > 0 else _f(h.get('buy_price', 0) or 0)
+8470|         if (len(batches) >= 2 and idx >= len(batches) - 1 and _il_cost > 0
+8471|                 and lp > _il_cost * (1 + min_profit_pct(h, s))
+8472|                 and net_pnl_if_sell(h, lp, s) > 0):
+8473|             if note != G.today:
+8474|                 h['pyr_note_date'] = G.today
+8475|                 log(disp(s), '加仓末批(第%d/%d批)取消: 现价%.2f已高于成本%.2f且扣费后仍净赚, '
+8476|                        '随时可能止盈, 剩余计划作废(不再补仓)'
+8477|                        % (idx + 1, len(batches), lp, _il_cost))
+8478|             h['plan_done'] = True

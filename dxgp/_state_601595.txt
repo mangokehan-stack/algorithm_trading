@@ -1,0 +1,149 @@
+顶层键: ['account', 'adds', 'buy_ctx', 'buys', 'done', 'handoff', 'hold', 'last_dl_date', 'last_init_date', 'ledger_sold', 'lock', 'manual_avg_cost', 'manual_fill', 'order_fills', 'ordids', 'orphans', 'pnlmeta', 'pos_empty_n', 'processed_deals', 'realized', 'sell_ctx', 'sells', 'sold', 'submit_intents', 'trades', 'trap_used']
+
+=== positions 结构 ===
+
+=== 其他可疑键 ===
+order_fills = {}
+
+=== trades: 601595 相关 ===
+trades 总条数 = 19
+
+  amount         = 2802.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.03
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 2807.03
+  npos_after     = 2
+  npos_before    = 1
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 100
+  pos_before     = 0
+  price          = 28.02
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|NEW)'
+  ts             = '2026-10-21 13:51:54'
+  vol            = 100
+
+  amount         = 2802.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.03
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 2807.03
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 200
+  pos_before     = 100
+  price          = 28.02
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|NEW)'
+  ts             = '2026-10-21 13:51:54'
+  vol            = 100
+
+  amount         = 19614.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.2
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 19619.2
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 900
+  pos_before     = 200
+  price          = 28.02
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|NEW)'
+  ts             = '2026-10-21 13:51:54'
+  vol            = 700
+
+  amount         = 2812.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.03
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 2817.03
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 1000
+  pos_before     = 900
+  price          = 28.12
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|ADD)'
+  ts             = '2026-10-21 14:21:57'
+  vol            = 100
+
+  amount         = 8436.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.08
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 8441.08
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 1300
+  pos_before     = 1000
+  price          = 28.12
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|ADD)'
+  ts             = '2026-10-21 14:21:57'
+  vol            = 300
+
+  amount         = 2812.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.03
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 2817.03
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 1400
+  pos_before     = 1300
+  price          = 28.12
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|ADD)'
+  ts             = '2026-10-21 14:21:57'
+  vol            = 100
+
+  amount         = 5632.0
+  code           = '601595.SH'
+  dir            = '买入'
+  fee            = 5.06
+  hold_days      = 0
+  mode           = '实盘'
+  name           = '上海电影'
+  net            = 5637.06
+  npos_after     = 2
+  npos_before    = 2
+  pnl            = 0.0
+  pnl_pct        = 0.0
+  pos_after      = 1600
+  pos_before     = 1400
+  price          = 28.16
+  realized_after = 328.26
+  reason         = '实盘买入成交回报(备注BUY|601595.SH|ADD)'
+  ts             = '2026-10-21 14:21:57'
+  vol            = 200

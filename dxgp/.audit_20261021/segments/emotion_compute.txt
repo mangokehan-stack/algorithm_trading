@@ -1,0 +1,304 @@
+L14211| 
+L14212| 
+L14213| def _winsorize_list(vals):
+L14214|     # 分位数缩尾(缺失保持None)
+L14215|     ok = [x for x in vals if x is not None]
+L14216|     if not ok:
+L14217|         return list(vals)
+L14218|     lo = _sent_quantile(ok, SENT_WINSORIZE_LOWER)
+L14219|     hi = _sent_quantile(ok, SENT_WINSORIZE_UPPER)
+L14220|     return [max(lo, min(hi, x)) if x is not None else None for x in vals]
+L14221| 
+L14222| 
+L14223| def _sent_comp_note(sig):
+L14224|     # V2.6.87(3): 合成指数的分量可用性说明 —— 旧版只打一个总 sentiment, 缺分量时
+L14225|     #   按剩余分量重新归一化权重, 阈值却是按3分量标定的, 看日志完全不知道指数定义变了。
+L14226|     _meta = {'z_advpct': '涨跌广度', 'z_limit_up': '涨停家数', 'z_turnover': '成交额'}
+L14227|     try:
+L14228|         _have = list(sig.get('comp_have') or [])
+L14229|         _miss = list(sig.get('comp_miss') or [])
+L14230|         _tot = int(sig.get('comp_total') or 0)
+L14231|         _hs = ','.join(_meta.get(k, k) for k in _have) or '无'
+L14232|         if not _miss:
+L14233|             return '%s(%d/%d 全可用)' % (_hs, len(_have), _tot)
+L14234|         _ms = ','.join(_meta.get(k, k) for k in _miss)
+L14235|         return '%s(%d/%d, 缺%s -> 权重已按剩余分量归一化, 阈值仍按%d分量标定)' % (
+L14236|             _hs, len(_have), _tot, _ms, _tot)
+L14237|     except Exception:
+L14238|         return '分量信息不可用'
+L14239| 
+L14240| 
+L14241| def _sent_compute(rows):
+L14242|     # 在已完成交易日序列(升序, 不含今天)上计算情绪信号; 无法计算返回 None
+L14243|     n = len(rows)
+L14244|     if n < SENT_MIN_PERIODS:
+L14245|         _sent_wlog('历史交易日不够(仅%d天,至少要%d天),算不了情绪信号' % (n, SENT_MIN_PERIODS))
+L14246|         return None
+L14247|     adv = _sent_col_series(rows, 'mkt_advance')
+L14248|     dec = _sent_col_series(rows, 'mkt_decline')
+L14249|     lu = _sent_col_series(rows, 'limit_up_cnt')
+L14250|     amt = _sent_col_series(rows, 'mkt_amount')
+L14251|     advpct = []
+L14252|     limit_up_ratio = []
+L14253|     for i in range(n):
+L14254|         if adv[i] is None or dec[i] is None:
+L14255|             advpct.append(None)
+L14256|             limit_up_ratio.append(None)
+L14257|             continue
+L14258|         denom = (adv[i] or 0.0) + (dec[i] or 0.0)
+L14259|         if denom <= 0:
+L14260|             advpct.append(None)
+L14261|             limit_up_ratio.append(None)
+L14262|             continue
+L14263|         advpct.append((adv[i] or 0.0) / denom)
+L14264|         limit_up_ratio.append((lu[i] if lu[i] is not None else 0.0) / denom)
+L14265|     # 缩尾 -> EWMA平滑 -> 滚动z(最后一行)
+L14266|     advpct_s = _sent_ewma(_winsorize_list(advpct), SENT_EWMA_SPAN)
+L14267|     limit_up_ratio_s = _sent_ewma(_winsorize_list(limit_up_ratio), SENT_EWMA_SPAN)
+L14268|     amt_s = _sent_ewma(_winsorize_list(amt), SENT_EWMA_SPAN)
+L14269|     z_advpct = _sent_z_last(advpct_s, SENT_ZSCORE_WIN)
+L14270|     z_limit_up = _sent_z_last(limit_up_ratio_s, SENT_ZSCORE_WIN)
+L14271|     z_turnover = _sent_z_last(amt_s, SENT_ZSCORE_WIN)
+L14272|     # 合成指数(按可用分量重新归一化权重)
+L14273|     keys = []
+L14274|     for _k, _w in SENT_SENTIMENT_WEIGHTS:
+L14275|         _z = {'z_advpct': z_advpct, 'z_limit_up': z_limit_up, 'z_turnover': z_turnover}.get(_k)
+L14276|         if _z is not None:
+L14277|             keys.append((_k, _w, _z))
+L14278|     _all_k = [k for k, _ in SENT_SENTIMENT_WEIGHTS]
+L14279|     _have_k = [k for k, _, _ in keys]
+L14280|     _miss_k = [k for k in _all_k if k not in _have_k]
+L14281|     if not keys:
+L14282|         _sent_wlog('所有情绪指标都取不到有效值,没法合成情绪信号')
+L14283|         return None
+L14284|     wsum = sum(_w for _, _w, _ in keys)
+L14285|     s = 0.0
+L14286|     for _k, _w, _z in keys:
+L14287|         s += (_w / wsum) * _z
+L14288|     # 事件哑变量
+L14289|     evt_frenzy = (z_advpct is not None and z_advpct > SENT_EVT_FRENZY_ADVPCT) or \
+L14290|                  (z_limit_up is not None and z_limit_up > SENT_EVT_FRENZY_LIMITUP)
+L14291|     evt_panic = (z_advpct is not None and z_advpct < SENT_EVT_PANIC_ADVPCT)
+L14292|     # L1 过滤
+L14293|     gate = (s < SENT_CORE_PARAMS['gate_panic_th']) or \
+L14294|            (s > SENT_CORE_PARAMS['gate_frenzy_th']) or evt_frenzy or evt_panic
+L14295|     # L3 Regime
+L14296|     if s < SENT_REGIME_PANIC_LO:
+L14297|         regime = 'panic'
+L14298|     elif s > SENT_REGIME_FRENZY_HI:
+L14299|         regime = 'frenzy'
+L14300|     else:
+L14301|         regime = 'neutral'
+L14302|     # L4 仓位(仅过热收缩, 下限保护)
+L14303|     hot = s if s > 0.0 else 0.0
+L14304|     size_mult = 1.0 - SENT_CORE_PARAMS['size_hot_scale'] * _sent_tanh(SENT_SIZE_HOT_TANH_K * hot)
+L14305|     if size_mult < SENT_SIZE_MIN_MULT:
+L14306|         size_mult = SENT_SIZE_MIN_MULT
+L14307|     overrides = dict(SENT_REGIME_PARAMS.get(regime) or {})
+L14308|     return {
+L14309|         'date': rows[-1]['date'],
+L14310|         'sentiment': s,
+L14311|         'regime': regime,
+L14312|         'gate_skip': bool(gate),
+L14313|         'evt_frenzy': evt_frenzy,
+L14314|         'evt_panic': evt_panic,
+L14315|         'size_mult': size_mult,
+L14316|         'overrides': overrides,
+L14317|         'comp_have': _have_k,
+L14318|         'comp_miss': _miss_k,
+L14319|         'comp_total': len(_all_k),
+L14320|     }
+L14321| 
+L14322| 
+L14323| def _sent_fresh_enough(last_date, today):
+L14324|     # 判断情绪数据最近完成日是否过期(交易日历优先, 缺失时自然日宽松兜底)
+L14325|     try:
+L14326|         _cal = getattr(G, 'calendar', None)
+L14327|         if _cal:
+L14328|             _cal = [str(x)[:8] for x in _cal]
+L14329|             if today in _cal and last_date in _cal:
+L14330|                 return 0 < (_cal.index(today) - _cal.index(last_date)) <= SENT_MONITOR_MAX_STALE_DAYS
+L14331|         import datetime
+L14332|         try:
+L14333|             _nat = (datetime.datetime.strptime(today, '%Y%m%d') -
+L14334|                     datetime.datetime.strptime(last_date, '%Y%m%d')).days
+L14335|         except Exception:
+L14336|             _nat = 0
+L14337|         return 0 < _nat <= max(SENT_MONITOR_MAX_STALE_DAYS * 2, 10)
+L14338|     except Exception:
+L14339|         return True
+L14340| 
+L14341| 
+L14342| # ---------------------------------------------------------------------------
+L14343| # 对外接口
+L14344| # ---------------------------------------------------------------------------
+L14345| def sent_bootstrap():
+L14346|     # 启动初始化: 初始化状态字典并打版本/指纹日志; V2.6.61 R2起不在此处拉数据(详见下方说明)
+L14347|     global _SENTIMENT_READY
+L14348|     if not _SENTIMENT_ON:
+L14349|         return
+L14350|     try:
+L14351|         # V2.6.110: clear() 会连 last_fetch_date 一起清掉 -> 换代码重启后当天重取一遍。
+L14352|         #   今天无害(本就还没出信号), 但明天盘中换代码就会把已成功的信号标记抹掉,
+L14353|         #   重取一轮(几十秒~几分钟接口占用), 并可能覆盖已算好的信号。
+L14354|         #   故 clear 前把该标记取出来, clear 后原样放回。
+L14355|         _keep_fetch_date = SENT_STATE.get('last_fetch_date')
+L14356|         _keep_sig_date = SENT_STATE.get('date')
+L14357|         SENT_STATE.clear()
+L14358|         SENT_STATE['ready'] = False
+L14359|         SENT_STATE['gate_skip'] = False
+L14360|         SENT_STATE['size_mult'] = 1.0
+L14361|         SENT_STATE['overrides'] = {}
+L14362|         SENT_STATE['acc_pending'] = False
+L14363|         # V2.6.106(方案9): 重启即清空累积池 —— 换日/换进程都从零开始拼
+L14364|         # V2.6.110: gen 写 -1.0 哨兵, 不写 _GEN_STATE['id']。
+L14365|         #   病因: sent_bootstrap() 在 init() 里跑, 而 gen_announce() 在 after_init() 里跑,
+L14366|         #   init 时 _GEN_STATE['id'] 还是 0.0 -> 池子记下 gen=0.0; 首次取数时本代已宣告
+L14367|         #   (非0), 比对必然不符 -> 白打一条【累积池重置: 换日(空 -> 20261020)】, 像是
+L14368|         #   真有旧代污染, 实则池子本来就是空的(已清0只)。
+L14369|         #   -1.0 = 【尚未绑定任何代】, 首次取数时直接绑定当前代, 不算换代、不打日志。
+L14370|         _SENT_ACC.update({'date': '', 'gen': -1.0,
+L14371|                           'md': {}, 'ok': 0, 'fail': 0,
+L14372|                           'retry': 0, 'rounds': 0, 'pend_rounds': 0})
+L14373|         # V2.6.110: 把 clear 前的刷新标记原样放回(见上方 _keep_* 注释)
+L14374|         if _keep_fetch_date:
+L14375|             SENT_STATE['last_fetch_date'] = _keep_fetch_date
+L14376|         if _keep_sig_date:
+L14377|             SENT_STATE['date'] = _keep_sig_date
+L14378|         SENT_STATE['rows'] = []
+L14379|         _SENTIMENT_READY = False
+L14380|         _sent_wlog('情绪模块初始化: 版本=%s 阶段=%d 参数校验码=%s (数据没准备好前全按中性处理)'
+L14381|                    % (SENT_VERSION, _SENTIMENT_PHASE, sent_fingerprint()))
+L14382|         if _SENTIMENT_PHASE >= 3:
+L14383|             _sent_wlog('L2增强说明: 宿主为规则型买入(缩量低吸), 无独立技术评分通道, '
+L14384|                        'L2增强保留参数与指纹但不改变买入结果; L1/L3/L4 全量生效')
+L14385|         # V2.6.61 R2修复(2026-10-17用户确认方案A): 启动绝不在init中同步拉取情绪数据 ——
+L14386|         #   旧版此处直接调sent_daily_refresh()→sent_fetch_all_data()同步拉取
+L14387|         #   SENT_BACKFILL_DAYS自然日x全市场5227只日线(客户端22:00实测init被堵死在此步),
+L14388|         #   宿主初始化全部推迟: 启动横幅后半段/资金风控口径/账号探测/对账/定时器注册
+L14389|         #   迟迟不执行, 策略长时间处于"半就绪"状态。
+L14390|         #   情绪信号为日频滞后1日数据, 晚数分钟就绪无任何损失; 首次刷新延后至
+L14391|         #   timer_poll首轮(挂载点已就位: 幂等+SENT_RETRY_SEC节流+失败降级中性),
+L14392|         #   就绪前买入侧全部中性(gate_skip=False/size_mult=1.0), 不影响交易决策。
+L14393|         _sent_wlog('启动初始化完成(仅置状态未拉数据): 首次情绪刷新延后至定时器首轮, '
+L14394|                    '宿主初始化不被阻塞')
+L14395|     except Exception as _e:
+L14396|         _SENTIMENT_READY = False
+L14397|         _sent_wlog('情绪初始化出了问题(继续按中性处理): %s' % _e)
+L14398| 
+L14399| 
+L14400| def sent_daily_refresh():
+L14401|     # 每交易日刷新情绪信号(滞后1日); V2.6.76: 取数已移交后台线程(见 sent_fetch_all_data),
+L14402|     #   主线程此处只做幂等节流判定并"发一条刷新指令", 立即返回, 绝不阻塞盘中轮询。
+L14403|     #   幂等: 今日已成功刷新过则不再发起; 失败则按 SENT_RETRY_SEC 节流重试。
+L14404|     if not _SENTIMENT_ON:
+L14405|         return
+L14406|     try:
+L14407|         _t = _sent_today()
+L14408|         if SENT_STATE.get('last_fetch_date') == _t:
+L14409|             return                      # 今日已刷新
+L14410|         _now = time.time()
+L14411|         # V2.6.99(1) 建此退避, V2.6.107 改判据: 只有"累积覆盖不再推进"才退避。
+L14412|         #   旧判据看本轮是否 budget_hit, 双实例下每轮都命中 -> 永远退避 1800 秒,
+L14413|         #   与 V2.6.106 的跨轮累积冲突(累积需 4 轮, 30 分钟一轮 = 2 小时才拼满)。
+L14414|         #   新判据由取数侧写入: 累积增长 >= 2 个百分点即清零, 保持 300 秒节奏。
+L14415|         _bh_streak = int(SENT_STATE.get('bh_streak') or 0)
+L14416|         # V2.6.108: 累积挂起(acc_pending) 优先于退避 —— 挂起只说明【还没拼满】, 不是
+L14417|         #   【接口取不动】, 必须按 300 秒节奏继续拼; 否则 acc_pending 一旦被 1800 秒
+L14418|         #   退避接住, 累积池有余量也白等(11:31 那次启动就是这样整天出不了信号)。
+L14419|         if SENT_STATE.get('acc_pending'):
+L14420|             _retry_sec = SENT_RETRY_SEC
+L14421|         else:
+L14422|             _retry_sec = 1800.0 if _bh_streak >= 2 else SENT_RETRY_SEC
+L14423|         if (_now - (SENT_STATE.get('last_try_ts') or 0.0)) < _retry_sec:
+L14424|             if _bh_streak >= 2 and (_now - (SENT_STATE.get('bh_backoff_log_ts') or 0.0)) >= _retry_sec:
+L14425|                 SENT_STATE['bh_backoff_log_ts'] = _now
+L14426|                 _sent_wlog('情绪取数已连续%d轮触发总预算(接口慢约11~21倍), 重试间隔退避300->1800秒;'
+L14427|                            '某轮不再命中预算即自动恢复300秒' % _bh_streak)
+L14428|             return                      # 重试节流
+L14429|         # V2.6.96(1): 日线下载期间不发起情绪取数 —— 两者都是"全市场批量打行情接口"。
+L14430|         #   2026-10-20 00:22:33 那次启动, 5226 只日线下载与 5226 只情绪取数同一秒并发:
+L14431|         #   下载每轮 8 秒只推进 153 只(正常 400), 情绪取数从常态约 40 秒拖到 151~195 秒,
+L14432|         #   互相抢接口, 谁也跑不快, 5226 只下完要 17 分钟。现改为串行: 下载阶段1
+L14433|         #   (G.dl_phase==1)期间只推迟、不发起; 下载完成后的下一轮定时器(30 秒内)自动发起,
+L14434|         #   推迟期间买入侧维持中性(不拦买、不缩放仓位), 与"情绪未就绪"同档。
+L14435|         #   注意这里不写 last_try_ts, 所以每轮都会重新判一次 dl_phase, 不会被 300 秒节流卡住。
+L14436|         #   但下载卡死不能把情绪一起拖死: 推迟满 30 分钟就告警并强行发起。
+L14437|         if int(getattr(G, 'dl_phase', 0) or 0) == 1:
+L14438|             _dl_since = SENT_STATE.get('dl_wait_ts') or 0.0
+L14439|             if _dl_since <= 0:
+L14440|                 SENT_STATE['dl_wait_ts'] = _now
+L14441|                 _dl_since = _now
+L14442|             if (_now - _dl_since) < 1800.0:
+L14443|                 if (_now - (SENT_STATE.get('dl_wait_log_ts') or 0.0)) >= 300.0:
+L14444|                     SENT_STATE['dl_wait_log_ts'] = _now
+L14445|                     _sent_wlog('股票日线还在下载中,本轮情绪取数延后(两者同时跑会抢行情接口)'
+L14446|                                '(实测下载每轮8秒只推进153只、情绪取数从约40秒拖到151秒以上)。'
+L14447|                                '下载结束后的下一轮定时器(30秒内)自动发起, 期间买入侧保持中性')
+L14448|                 return
+L14449|             _sent_wlog('[告警] 日线下载已持续%d分钟仍未完成, 不再等它: 本轮情绪取数照常发起'
+L14450|                        '(两者并发会互相拖慢, 但情绪迟迟不就绪对明早的闸门判断影响更大)'
+L14451|                        % int((_now - _dl_since) / 60.0))
+L14452|         else:
+L14453|             SENT_STATE['dl_wait_ts'] = 0.0
+L14454|         SENT_STATE['last_try_ts'] = _now
+L14455|         # 发起后台取数(立即返回None, 不阻塞); 幂等由 sent_fetch_all_data 内的非阻塞锁保证
+L14456|         sent_fetch_all_data()
+L14457|     except Exception as _e:
+L14458|         # V2.6.78 P2-1: 异常节流 — 每60秒最多一条, 持续故障持续有信号但不刷屏
+L14459|         import time as _t
+L14460|         _now_ts = _t.time()
+L14461|         _last_err_ts = SENT_STATE.get("last_err_ts", 0.0)
+L14462|         if _now_ts - _last_err_ts >= 60.0:
+L14463|             SENT_STATE["last_err_ts"] = _now_ts
+L14464|             _sent_wlog('情绪刷新调度出了问题(按中性处理): %s' % _e)
+L14465| 
+L14466| 
+L14467| def _sent_reset_ready(why):
+L14468|     # 降级中性: 清空信号并复位就绪标记
+L14469|     global _SENTIMENT_READY
+L14470|     _SENTIMENT_READY = False
+L14471|     SENT_STATE['ready'] = False
+L14472|     SENT_STATE['err'] = why
+L14473|     SENT_STATE['gate_skip'] = False
+L14474|     SENT_STATE['size_mult'] = 1.0
+L14475|     SENT_STATE['overrides'] = {}
+L14476|     _sent_wlog('情绪信号暂时退回中性(不影响交易): %s' % why)
+L14477| 
+L14478| 
+L14479| def sent_gate_skip():
+L14480|     # L1闸门: 恐慌/狂热/极端事件跳过新开仓(未就绪=False, 不阻塞)
+L14481|     if not (_SENTIMENT_ON and _SENTIMENT_READY):
+L14482|         return False
+L14483|     return bool(SENT_STATE.get('gate_skip', False))
+L14484| 
+L14485| 
+L14486| def sent_size_mult():
+L14487|     # L4仓位乘数: 过热收缩, 下限保护; 未就绪=1.0
+L14488|     if not (_SENTIMENT_ON and _SENTIMENT_READY):
+L14489|         return 1.0
+L14490|     m = SENT_STATE.get('size_mult')
+L14491|     if isinstance(m, (int, float)) and m > 0:
+L14492|         return float(m)
+L14493|     return 1.0
+L14494| 
+L14495| 
+L14496| def sent_param_overrides():
+L14497|     # L3 Regime参数覆写字典(键=宿主常量名); 未就绪={}
+L14498|     if not (_SENTIMENT_ON and _SENTIMENT_READY):
+L14499|         return {}
+L14500|     o = SENT_STATE.get('overrides')
+L14501|     if isinstance(o, dict):
+L14502|         return dict(o)
+L14503|     return {}
+L14504| 
+L14505| 
+L14506| def sent_param(name, default):
+L14507|     # 读取宿主参数(带L3覆写); 未覆写返回 default
+L14508|     o = sent_param_overrides()
+L14509|     if name in o:
+L14510|         return o[name]
+L14511|     return default
+L14512| 
+L14513| 
+L14514| # ===== 情绪模块(单文件合并) END =====

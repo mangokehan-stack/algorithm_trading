@@ -1,0 +1,83 @@
+MD5      = d9a9f318757278cf6c4d25ea2209baec
+字节     = 894774
+段数     = 14711 (真实行数 14710)
+裸 LF    = 0
+裸 CR    = 0
+BOM      = False
+GBK往返  = True
+VERSION  = V2.6.157
+文件头L5 = # 版本号: V2.6.157             修改时间: 2026-10-21 14:30 (V2.6.157: 只改「存量持仓费
+模块级大写常量(粗计) = 284
+硬止损AST节点 = 0
+
+=== 改动点 1: 粗估判据 ===
+L8483|            _fe_old = _f(_h.get('fee', 0.0))
+L8484|            # V2.6.157: 只校准「真正的 0.15% 粗估」记录。这段校准的本意是修 V2.6.71 之前
+L8485|            # 用 FEE_RATE_EST(0.15%) 粗估费率记账的老持仓; 而「成交回报逐笔累加」出来的 fee
+L8486|            # 是当时的真实记录(一张委托拆多笔成交时每笔各触发起收, 只会偏高, 方向保守),
+L8487|            # 不应当被二次改写。2026-10-21 实测: 601595 上海电影两张委托累计 25.45 元被按
+L8488|            # 一张重算成 5.45 元, 低估 5.00 元 —— 方向与铁律二(扣完费用净利为正才卖)相反。
+L8489|            # 判据: 原 fee 与「成交金额 x 0.0015」吻合(容差 max(1.0, 2%)) → 认定是粗估形态
+L8490|            # → 才重算; 明显偏离则保留原值不改, 宁可偏高不可偏低。
+L8491|            _fe_est = _round2(_fs * 0.0015)
+L8492|            _est_tol = max(1.0, _fe_est * 0.02)
+L8493|            if abs(_fe_old - _fe_est) > _est_tol:
+L8494|                _fee_keep.append('%s: fee=%.2f(粗估形态应为%.2f, 偏离%+.2f)'
+L8495|                                 % (_code, _fe_old, _fe_est, _fe_old - _fe_est))
+
+=== 改动点 2: 跳过日志 ===
+L8512|        if _fee_keep:
+L8513|            log('[安全] 存量持仓费用校准跳过%d只(非0.15%%粗估形态, 按成交回报真实记录原样保留; 费用偏高属保守方向)'
+L8514|                ' | %s'
+L8515|                % (len(_fee_keep), '; '.join(_fee_keep)))
+
+=== 校准段整体(确认 continue 真的跳过重算) ===
+L8467|        _fee_fixed = []
+L8468|        _fee_fix_sum = 0.0
+L8469|        _fee_keep = []
+L8470|        for _code, _h in list(hold.items()):
+L8471|            if not is_own_position(_h):
+L8472|                continue
+L8473|            _ev = int(_f(_h.get('fill_vol', 0)) or 0)
+L8474|            if _ev <= 0:
+L8475|                _ev = int(pos_vol(_h))
+L8476|            if _ev <= 0:
+L8477|                continue
+L8478|            _fs = _f(_h.get('fill_sum', 0.0))
+L8479|            if _fs <= 0:
+L8480|                _fs = _f(_h.get('buy_price', 0.0)) * _ev
+L8481|            if _fs <= 0:
+L8482|                continue
+L8483|            _fe_old = _f(_h.get('fee', 0.0))
+L8484|            # V2.6.157: 只校准「真正的 0.15% 粗估」记录。这段校准的本意是修 V2.6.71 之前
+L8485|            # 用 FEE_RATE_EST(0.15%) 粗估费率记账的老持仓; 而「成交回报逐笔累加」出来的 fee
+L8486|            # 是当时的真实记录(一张委托拆多笔成交时每笔各触发起收, 只会偏高, 方向保守),
+L8487|            # 不应当被二次改写。2026-10-21 实测: 601595 上海电影两张委托累计 25.45 元被按
+L8488|            # 一张重算成 5.45 元, 低估 5.00 元 —— 方向与铁律二(扣完费用净利为正才卖)相反。
+L8489|            # 判据: 原 fee 与「成交金额 x 0.0015」吻合(容差 max(1.0, 2%)) → 认定是粗估形态
+L8490|            # → 才重算; 明显偏离则保留原值不改, 宁可偏高不可偏低。
+L8491|            _fe_est = _round2(_fs * 0.0015)
+L8492|            _est_tol = max(1.0, _fe_est * 0.02)
+L8493|            if abs(_fe_old - _fe_est) > _est_tol:
+L8494|                _fee_keep.append('%s: fee=%.2f(粗估形态应为%.2f, 偏离%+.2f)'
+L8495|                                 % (_code, _fe_old, _fe_est, _fe_old - _fe_est))
+L8496|                continue
+L8497|            # V2.6.156: 按该仓买过的委托单张数估算起收, 防把多张委托的起收又抹回一张;
+L8498|            # 旧记录无 order_cnt 字段时默认 1 张, 与 V2.6.72 原口径完全一致
+L8499|            _n_ord = max(1, int(_f(_h.get('order_cnt', 0)) or 0))
+L8500|            _fe_new = fee_buy(_round2(_fs), _code, n_order=_n_ord)
+L8501|            if abs(_fe_new - _fe_old) > 0.005:
+L8502|                _ct_old = _f(_h.get('cost_total', 0.0))
+L8503|                _h['fee'] = _round2(_fe_new)
+L8504|                _h['cost_total'] = _round2(_fs + _fe_new)
+L8505|                _recon_changed = True
+L8506|                _fee_fixed.append('%s: fee %.2f->%.2f, cost_total %.2f->%.2f'
+L8507|                                  % (_code, _fe_old, _fe_new, _ct_old, _h['cost_total']))
+L8508|                _fee_fix_sum += (_ct_old - _f(_h.get('cost_total', 0.0)))
+L8509|        if _fee_fixed:
+L8510|            log('[安全] 存量持仓费用口径校准(V2.6.72): 重算%d只, 旧粗估0.15%%->真实费率, 合计成本调整%.2f元 | %s'
+L8511|                % (len(_fee_fixed), _fee_fix_sum, '; '.join(_fee_fixed)))
+L8512|        if _fee_keep:
+L8513|            log('[安全] 存量持仓费用校准跳过%d只(非0.15%%粗估形态, 按成交回报真实记录原样保留; 费用偏高属保守方向)'
+L8514|                ' | %s'
+L8515|                % (len(_fee_keep), '; '.join(_fee_keep)))

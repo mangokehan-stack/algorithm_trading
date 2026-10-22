@@ -1,0 +1,7296 @@
+# -*- coding: gbk -*-
+# ============================================================================
+#  gf_qmt_native_multi.py  --  多标的(宁波银行) 趋势混合 DCA 金字塔加仓策略
+#  策略版本: v1.2.47 (构建 2026-10-19) —— 单一真源见下方 STRATEGY_VERSION，init 启动时打印「版本自检」行
+#  ── v1.2.47 = AUD78（2026-10-19：券商真实费率落地，仅 GBK 交付件）——
+#    ① 新增券商费率常量（STOCK_COMMISSION_RATE/COMMISSION_MIN/STAMP_TAX_RATE/TRANSFER_FEE_RATE），
+#       佣金率由写死万2.5 改为用户提供真实费率 万0.841（5 元起收，买卖双向都收）；
+#       印花税万5、过户费万1 保持原口径（国家规定不可议价）。
+#    ② compute_buy_cost 默认参数改为 None→读全局常量（兼容既有调用方传显式费率）；
+#       六处内联佣金/印花/过户计算点全部改用常量，杜绝将来再手写数字漂移。
+#    ③ 影响：买入成本/卖出净到手/止盈阈值判定/R1 闸门全部随新费率下调账面成本，
+#       更贴近实盘；铁律「扣费后赚钱才卖」零触碰，仅校准费用口径。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.46 = AUD77（2026-10-19：冷启动护栏改「30根bar 或 180秒取先到」+外部减仓档位重置，仅 GBK 交付件）——
+#    ① 冷启动护栏时间上限：原实现只数 bar，启动回放未达 30 根（如盘前启动、低波动时段）时
+#       整日卡在护栏内错过首仓窗口。现加 _REPLAY_COLD_START_SEC=180s，30 根 bar 或 3 分钟
+#       取先到即解除；解除日志区分「根数先到/时间先到」两种原因，便于验收。
+#    ② 外部减仓档位重置：_sync_state_to_actual 原用 state["position_shares"] 判 tier 归零，
+#       但该字段在 total_cost 更新后才写，减仓当刻永远取旧值→tier 不归零→下次金字塔跳过应补档位。
+#       现改用函数开头记录的 _prev_pos 与实际股数比较：减仓(实际<原记录)重置为首仓档重新金字塔，
+#       未减仓/外部加仓保持原档位（避免误重置重复加仓）。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.46 = AUD76（2026-10-19：人工接管标的集合，仅 GBK 交付件）——
+#    ① SYMBOLS 项新增 manual_takeover 布尔标志 + manual_takeover_codes() 返回接管标集合。
+#       置位后策略对该标的不做任何自动买卖决策（首仓/M2/M3/续批/止盈/涨停卖出全部跳过），
+#       仅保留日志/风控告警；其 capital_cap 额度从策略总预算中释放（_account_free_cash / init）。
+#    ② 用户拍板：人工接管用于实盘临时干预，避免策略与人工指令打架；默认 False（零行为变更）。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.46 = AUD75（2026-10-19：F2 拦截日志改状态变化驱动节流，仅 GBK 交付件）——
+
+#    ① 原 _f2_diag_due 为纯时间间隔（60s）：只要仍被拦截就每分钟刷一条完全相同的日志，
+#       实盘 2026-10-19 上午 09:58~10:24 已刷 7 条，一整天可达数十条，淹没诊断信号。
+#    ② 现改为条件驱动：_f2_diag_due(code, detail) 记录上次拦截明细，
+#       明细变化立即输出；明细不变则按 _F2_DIAG_HEARTBEAT（30 分钟）保底确认一次，
+#       防「不报错即正常」误判；detail=None 时退化为原 60s 行为（向后兼容）。
+#    ③ 仅影响日志输出频率：拦截判定照旧每 bar 执行，回放闸/风险控制/买卖全零触碰。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚寛版本轮不同步更新。
+
+#  ── v1.2.45 = AUD74（2026-10-19：P0 热修复，仅 GBK 交付件）——
+#    ① is_trade_day() 工作日分支缺失 return：_TRADEDAY_SET=None 且非周末时，
+#       函数执行到末尾隐式返回 None，5 处解包调用（init 交易日自检/
+#       _session_now/_heartbeat_tick/_hdiag/_stall）全线抛 TypeError。
+#       实盘铁证：2026-10-19（周一）init 异常 + [trade]start 后 handlebar 每 bar 崩溃，
+#       _handlebar_impl 主逻辑未执行，策略完全疲輧。
+#       修复：按 2026-10-01 P3-6 原设计故意（akshare 拉取失败默认放行）补齐
+#       return (True, "unknown")；非交易时段由顶部时段门控兑底拦截。
+#    ② 勯过脑病根：10-17 清理删除 gf_tradeday_cache.json（缓存），QMT 内置
+#       python 无 akshare，在线语取失败 → _TRADEDAY_SET=None → 呕引本项。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚寛版本轮不同步更新。
+
+#  ── v1.2.44 = AUD73（2026-10-17：文件头注释块排版归位，仅 GBK 交付件）——
+#    ① 删除 v1.2.38 块标题行行尾误粘的 AUD69/v1.2.40 整段重复描述（该段正式块已存在于 v1.2.40 条目，且错位副本含换行碎片）；
+#    ② 删除误插在 v1.2.39 块开头的「最新修改时间: 2026-10-16」历史遗留行（信息已由版本标题行与文件头首行覆盖，零信息损失）；
+#    ③ 以上均为注释层归位，零代码行为变更；STRATEGY_VERSION v1.2.43 -> v1.2.44。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚寛版本轮不同步更新。
+#  ── v1.2.43 = AUD72（2026-10-17：市场情绪模块上线，用户指定「全部一起做」，仅 GBK 交付件）——
+#    ① 新增情绪模块（SENTIMENT_ENABLED / SENTIMENT_CFG）：指数趋势/动能/波动/量能/乖离 +
+#       个股相对强弱/量能 共 7 个硬指标，滚动分位(默认60根已收盘bar)编码 + EWMA(span=10) 平滑，
+#       输出复合情绪分(0~1)与档位(恐慌<0.20/谨慎<0.40/中性<0.60/乐观<0.80/狂热>=0.80)。
+#    ② 融合：门控（恐慌/狂热禁首仓 + M2/M3 加仓）+ 仓位缩放（恐慌0.5/谨慎0.7，只减不加，上限恒1.0），
+#       仅影响买入侧；卖出/移动止盈/涨停卖出/躺平/冷却/v9 全部零触碰；铁律「绝不止损、扣费赚钱才卖」不变。
+#    ③ 数据可得性：指数日线收盘+成交量（剔当日bar，60s缓存，与 F2 同源）；个股已收盘量价。
+#       数据不足 fail-open 放行并节流提示；SENTIMENT_CFG 为独立配置不参与 PARAMS 指纹，
+#       升级不改状态文件 param_fp 校验；情绪 EWMA 仅存内存、不新增状态文件字段（重启重建）。
+#    ④ 调优/回测：附独立脚本 _tune_sentiment.py（与策略同公式，akshare 拉数→输出分档/IC/极端段统计）。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.42 = AUD71（2026-10-17：零预设独立审计修复·用户逐项确认，仅 GBK 交付件）——
+#    ① P1 在途买单「部分成交收敛」写盘补齐：verify_position_before_order 在途量收敛
+#       _PENDING_BUYS[code]=expected-actual 后，补 _PENDING_TS 时间戳刷新与 _pending_save()
+#       落盘，与 _pending_add/_pending_clear「写穿」行为对齐；防重启瞬间读到偏大的旧在途
+#       台账（下一根 bar 本可自愈，此项为一致性加固，零买卖行为变更）。
+#    ② P2 注释排版清理：F-4 参与率告警时序注释缩进归位；「真实持仓以券商账户为准」注释
+#       从上一行行尾拆出、放回 query_position_safe 调用前。纯注释，零行为变更。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.41 = AUD70（2026-10-17：第十四轮零预设独立审计·用户逐项确认修复，仅 GBK 交付件）——
+#    ① P1 止盈卖出重置保留 firstpos_date=当日：state.clear() 后与外部清仓分支同口径保留
+#       「当日首仓下单日期」，杜绝「当日止盈平仓 → 当日重新开首仓」路径
+#       （现被 STOP_COOLDOWN_DAYS=3 冷却兜底，本项为防御纵深 + 行为一致性加固）。
+#    ② 文件头版本注释与 STRATEGY_VERSION 对齐（消除双处版本不一致）。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.40 = AUD69（2026-10-17：第十三轮零预设独立审计·用户拍板落地 F-1~F-5，仅 GBK 交付件）——
+#    ① P1 死代码删除：v8 单笔首仓分支（v9 分笔首仓已统一接管），消除双路径维护歧义，
+#       ENTRY_OPT_ENABLED=False 显式拒绝首仓（持仓加仓/止盈/卖单不受影响）。
+#    ② P2 M2 加仓持久化兑底：与 M3/intraday_add 行为对齐，防止 save_state 连续失败后重读 tier 重夏加同档。
+#    ③ P3 eval(name) 替换为字典查表（_DL_FUNCS），函数名硬编码无注入面，纯粹提升代码质量。
+#    ④ P4 参与率告警时序澄清：仅注释，逻辑本身已正确（_PARTICIP_UNIT_ALERT 按"当日"去重）。
+#    ⑤ P5 in_cooldown 防御性类型检查：防止 stop_cooldown_until 类型异常崩 handlebar。
+#    ⑥ STRATEGY_VERSION v1.2.39 -> v1.2.40。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.39 = AUD68（2026-10-16：第十三轮零预设独立审计修复，仅 GBK 交付件）——
+#    ① P1 数据就绪告警标志「僵尸残留」修复：data_gate_ready / data_gate_ready_for 的放行分支
+#       原先只在「上次失败→本次成功」转换时才删告警标志文件，进程重启后首查即通过时永不删——
+#       实证：2026-10-13 12:07 的告警在数据早已补齐、10-14 已成功开仓后仍残留 3 天，
+#       外部看门狗持续误判「策略仍在拦截」。现放行即无条件重算全局缺失项并删除/改写标志。
+#    ② P2 金字塔末档被手续费顶掉修复：can_invest 硬顶留 300 元费用缓冲（cap×0.9 → cap×0.9+300）。
+#       deployed 为含费口径而本次金额不含费，满档前第4档(5%)差约44元永不成交、实际封顶约85%；
+#       现恢复四档全满，绝对上限仍受 buy_shares 资金口径闸门与 cap 约束，不突破单标的预算。
+#    ③ P2 补齐缺失函数 previous_trading_day（半时诊断「指标末根日期」原静默退化为占位文字）。
+#    ④ P2 文件头 QUICK_TRADE 背景注释与官方文档矛盾修正（官方定义 0=逐K线生效、2=立即下单；
+#       代码值 2 不变，纯注释对齐）。
+#    ⑤ P3 六项：日志去重注释 60s→300s；_session_now/心跳展示口径对齐交易门 11:29:59/14:59:59；
+#       SYMBOLS 过期注释更新（生成链已退役）；_is_replay_bar 增加 count 参数、纯日志函数不再
+#       多计冷启动/风暴计数；save_state 内容未变跳过写盘+镜像；entry_signal_full 量能数据不足
+#       由「跳过确认」收紧为「拦截」。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.38 = AUD67（2026-10-16：第十二轮零预设独立审计修复，仅 GBK 交付件）——
+#    ① P1 回放闸「上方背景注释块」与代码行为矛盾修复：L4807-4808 旧注释还写着 fail-open
+#       放行、fail-closed 更危险，但 AUD56 早就把代码改成 fail-closed（时间戳 API 不可用
+#       时 return True 拦下 + 60s 节流风控事件）。其他 AI 在 AUD56 改了代码没同步上方背景
+#       注释块，造成将来审计/维护者误判代码方向，甚至好心改回 fail-open 把 AUD56 修复回退。
+#       纯注释修复，零行为变更。
+#    ② P2 止损告警节流标记 stop_loss_pending 被外部同步路径强制清零修复：_sync_state_to_actual
+#       每次外部同步都执行 state["stop_loss_pending"]=False，任何外部持仓变动（手工加仓、
+#       券商追踪、外部清仓、减仓）都会把'本轮回撤已告警过'的节流标记清掉。下次回撤未过阈值
+#       时就重新进入'尚未告警'分支，重复发风控告警/重复刷日志。
+#       修法：直接删掉那行，让主流程 check_stop_loss_alert 返回 False（价格真正回升到阈值下）
+#       时才独占清除职责。零行为变更（不碰铁律、不涉及买卖，只影响告警节流时机）。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.37 = AUD66（2026-10-16：关闭 AUD46 个股极强信号豁免 F2 大盘过滤，用户拍板，仅 GBK 交付件）——
+#    ① _sync_state_to_actual 检测到「券商清仓(actual_vol==0)且非自身卖出在途」时，
+#       按传入现价×(1-卖出滑点0.003) 生成保守成交价，调用 _pnl_record_close 记账，
+#       计入 _PNL_HISTORY（含 win/loss 胜率、净到手、本次盈亏率%），日志注明「外部手工清仓」。
+#    ② 自身卖出在途期间(券商持仓未消化)仍走冻结恢复路径不记账，避免与 sell_all 记账重复。
+#    ③ 部分减仓(actual_vol>0 但少于内部记录)不记账，仅同步状态；铁律「扣费后赚钱才卖」不受影响。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.37 = AUD66（2026-10-16：关闭 AUD46 个股极强信号豁免 F2 大盘过滤，用户拍板，仅 GBK 交付件）——
+#    ① 参数 f2_exempt_on_strong 改为 False：空仓首仓必须严格通过沪深300大盘过滤（MA20>=MA60），
+#       个股再强也不豁免；已持仓加仓/止盈/躺平/冷却/v9 路径零影响（本就不经过该门）。
+#    ② _f2_strong_exempt / market_filter_gate_ok 函数结构保留（开关关闭即失效），便于回滚。
+#    ③ 参数指纹 _PARAM_FP 随之变化，init 将打印参数变更告警属预期。纯参数关闭，零代码逻辑改动。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.35 = AUD64（2026-10-15 15:30：持仓路径收敛首仓时间窗字段，仅 GBK 交付件）——
+#    ① 半时诊断中「首仓时间窗」仅对空仓首仓路径输出；持仓加仓由 M2/M3 独立管理，持仓时不显示该字段。
+#    ② 卡点链路保留 in_win 判定（空仓首仓路径确实依赖它），仅收敛展示口径。纯日志修复，零行为变更。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.34 = AUD63（2026-10-15 13:00：诊断归因与日志口径修复，仅 GBK 交付件）——
+#    ① 持仓时按M2/M3加仓路径解释卡点，不再把首仓信号/首仓时间窗误报成加仓卡点。
+#    ② KDJ/WR标注已收盘日线来源与末根日期；日内涨跌标注相对昨收；浮盈标注费用口径。
+#    ③ F2豁免、参与率节流、启动风控状态文案明确。纯日志修复，不改变任何交易判断。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.33 = AUD62（2026-10-15 10:00：冷启动护栏解除日志，仅 GBK 交付件）——
+#    ① 前30根bar拦截完成后仅打印一次「护栏解除」，明确累计bar数、解除时间及实盘委托恢复。
+#       只增强日志可解释性，不改变回放闸、冷启动计数、风暴熔断或任何买卖判断。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.32 = AUD61（2026-10-14 10:00：每笔清仓明细显示本次盈亏率%，仅 GBK 交付件）——
+#    ① 每笔清仓记账日志新增「本次盈亏率%」：净盈亏/本次成本份额×100，记账当刻即可
+#       看到单笔胜率（如 +526.57元(+0.55%,胜)），无需等30分钟汇总；累计胜率保持显示。
+#       铁律零触碰：纯记账+日志，不参与任何买卖判断。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.31 = AUD60（2026-10-14 09:45：清仓胜率统计，仅 GBK 交付件）——
+#    ① 清仓记账新增胜率：每笔净盈亏>0 记一胜，<=0 记一负；win/loss 落盘持久化，
+#       每 30 分钟汇总日志一并显示「已清仓N次(胜X负Y 胜率Z%)」。铁律「不赚钱不卖」
+#       保证策略只卖盈利仓，但部分卖出/滑点临界仍可能出现负净到手，如实记录不掩盖。
+#       铁律零触碰：纯记账+日志，不参与任何买卖判断。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.30 = AUD59（2026-10-14 09:20：持仓盈亏+已清仓盈亏每30分钟汇总日志，仅 GBK 交付件）——
+#    ① 新增持仓盈亏与已清仓盈亏汇总日志：sell_all 卖出下单成功即记账（按保守成交价
+#       扣卖出三费减按比例折算的持仓成本，得本次净到手盈亏），累计到 gf_pnl_history.json
+#       持久化，重启不丢；每 30 分钟在交易时段内输出一条汇总日志（当前持仓净浮盈 +
+#       已清仓累计净到手 + 策略累计盈亏）。
+#       铁律零触碰：纯日志+记账，不参与任何买卖判断；任何异常静默忽略。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.29 = AUD58（2026-10-14 08:15：第十二轮零预设独立审计·用户拍板方案A 落地，仅 GBK 交付件）——
+#    ① P1 双口径矛盾修复：should_take_profit 与 sell_all R1 统一为「按最保守成交价
+#       (现价×(1-卖出滑点0.003))」计算净到手盈亏。原实现 should_tp 用「现价」判盈
+#       (浮盈+0.1% 即判定「该卖」)，但 sell_all R1 用「保守成交价」判净到手
+#       (浮盈<0.15% 时净到手为负拦截)，两把尺子对不齐——浮盈 0~0.3% 临界区策略
+#       反复「想卖没卖成」，日志刷屏。修复后判定门槛与成交门槛完全对齐，策略只在
+#       「按最差成交价扣费后仍赚钱」时才触发卖出，铁律更严格守住。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.28 = AUD57（2026-10-14 07:35：第十二轮零预设独立审计·用户逐项拍板落地，仅 GBK 交付件）——
+#    ① P1 移动止盈失效缺陷修复：原实现把 pnl_pct >= trailing_activate_pct(3%) 作为前置门槛，
+#       浮盈一旦跌破激活线就永久退出移动止盈判断，peak 被冻结但回撤触发永不进入——
+#       利润可从 +4% 一路回吐到 0 甚至亏损都不卖（移动止盈形同虚设，只剩固定止盈 4% 出场）。
+#       现改为两段式：peak 仅在「浮盈>=激活线 且 创新高」时更新；一旦 peak 已激活(>0)，
+#       后续回撤判定不再回看激活线，直接从 peak 回落>=trailing_dd_pct(2%) 且净到手仍>成本
+#       即触发卖出。铁律零触碰：仍要求 pnl_pct>=0（扣费后赚钱才卖），亏损卖出依旧被拦截。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.27 = AUD56（2026-10-13 23:20：第十一轮零预设独立审计·用户逐项拍板落地，仅 GBK 交付件）——
+#    ① P2 数据就绪闸门改「逐标的判定」：原闸门任意一个启用标的数据不足就全局拦截，
+#       一个冷门标的缺数据会连累其他标的一起不能买卖。新增 data_gate_ready_for()，
+#       每根 bar 只查「沪深300指数（F2 大盘过滤共用）+ 当前这只标的自身」的日线，
+#       谁的数据不够只拦谁，别的标的照常交易；告警标志文件按全局剩余缺失项实时刷新，
+#       全部补齐才删除。init 启动自检与 stop 汇总仍用全局视图（只报警不拦交易）。
+#    ② P3 回放闸时间戳不可用时由「放行」(fail-open) 改为「拦下」(fail-closed)：
+#       get_bar_timetag/barpos 取不到或解析出的年份不在 2000~2100 时，拿不准本 bar
+#       是不是历史回放，宁可跳过本根 bar 的全部交易逻辑也不发委托；每 60 秒打一次
+#       醒目日志并推一条风控事件，实盘若持续出现即说明行情 API 异常，需人工检查。
+#    ③ P4 参与率闸门「近 20 日均量为 0」不再永久堵死买入：能走到买入函数说明数据门
+#       已确认 65 根日线齐全、当下 tick 有量（真停牌已被主流程连续 3 根零量启发式挡住），
+#       此时均量为 0 实际只可能是数据源缺量/零价清洗剔光。改为跳过参与率闸门，
+#       交在途/持仓对账/资金硬上限/涨停笼子等其余闸门继续把关，每日每标的推一次
+#       风控告警提醒人工核对 QMT 日线数据。资金安全由 capital_cap 硬闸门兜底。
+#    ④ P6（趋势路径免检量能）用户拍板保持现状，本轮不动。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.26 = AUD55（2026-10-13 22:15：第十轮零预设独立审计加固，仅 GBK 交付件）——
+#    ① M3 盘中阶梯加仓：可用现金 free 原在档位循环外只算一次、买入成功后不递减，极端暴跌
+#       单根bar连触发 2 档时，第 2 档仍按最初的现金额度定量，两笔合计可能超过账户真实可用
+#       现金 -> 券商以「资金不足」拒单（废单）并催生买入冷却/熔断。现改为每档成交后
+#       free = max(0, free - vol*price)，第 2 档按剩余现金定量（不突破 capital_cap 硬上限）。
+#    ② sell_all 未传 state 的分支原只查持仓与可卖量、不判盈亏，是「不赚钱不卖」铁律的后门
+#       （当前全部调用点都传了 state，不可达，但需堵死）；现改为直接拒绝卖出并告警。
+#    ③ 参与率单位自检由「打一行日志」升级为每日每标的一次醒目风险告警（_notify_risk），
+#       便于第一时间发现「QMT 日线 volume 单位若为股而非手 -> 参与率上限被放大 100 倍」。
+#    ④ 半时诊断（AUD45）改传 state 浅拷贝，消除纯日志函数经 should_take_profit 写
+#       state["trailing_peak"] 的副作用。
+#    四项中 ②③④ 为纯加固/纯日志（零行为变更）；①仅影响「单根bar连触发 2 档」的极端场景，
+#    效果是第 2 档按剩余现金买少一点，正常单档路径完全不变。
+#    铁律不变：坚决不止损、扣费后赚钱才卖。UTF-8 版与聚宽版本轮不同步更新。
+#  ── v1.2.25 = AUD54（2026-10-13 21:25：init「运行模式自检」时序修正——实测框架
+#    「[trade]start <mode> mode」标记于 init 自检之后约 3~4 秒才落盘（当日 15 次启动 100% 命中此规律），
+#    故 init 取不到属必然、非故障。去掉易被误读为故障的「未能自动判定」措辞，改述为
+#    「本步不作结论、已安排首次 handlebar 自动补测」，并把探针丢弃原因（如仅命中上次运行的
+#    陈旧标记）一并打出便于诊断。纯日志文案+注释，零行为变更，不影响任何买卖路径。
+#    铁律不变：坚决不止损、扣费后赚钱才卖）
+#  ── v1.2.24 = AUD53（2026-10-13 21:00：日志保留份数 5 -> 20——日志按「每次启动轮换一份」，
+#    原 5 份在盘中频繁重启时会把上午的日志挤掉（10-13 实盘暴露：最早只剩 12:05 那次启动，
+#    上午 09:45-11:20 首仓窗口的「为何没买」诊断无法回溯）。镜像份数同步改为随 LOG_BACKUP_COUNT
+#    动态生成（原硬编码 .1~.5）。纯留存份数调整，判定逻辑与全部买卖行为零改动。
+#    此前 v1.2.23=AUD52 半时诊断口径与引擎对齐；v1.2.22=AUD51 指数数据异常告警+补下载熔断。
+#    铁律不变：坚决不止损、扣费后赚钱才卖）
+#   ── v1.2.22 = AUD51（2026-10-13 首跑暴露：指数数据异常醒目告警+补下载熔断，仅 GBK 交付件，UTF-8 版与聚宽版本轮不同步更新）：
+#       v1.2.21 上线降级兜底后发现：QMT 客户端本地缓存的 000300.SH 日线数据本身被前复权
+#       调整或损坏（新接口返回 29.9077、老接口返回 30.8100，真实值 4481.90），
+#       两个接口都读同一个损坏数据源，降级也救不回，补下载只会反复拿到坏数据。
+#       AUD51 做两件事：① 连续失败 >=3 次后熔断补下载（5 分钟内不再刷补下载，避免日志刷屏和接口轰炸）；
+#       ② 醒目告警：写明「指数数据异常、需手动修 QMT 数据」，写入告警标志文件供外部监控读取。
+#       纯取数层防御，零行为变更，不影响任何买卖路径；护栏仍保守拦截，绝不因坏数据错买。
+#       铁律不变：坚决不止损、扣费后赚钱才卖。
+#   ── v1.2.21 = AUD50（2026-10-13 首跑暴露：指数取数老接口降级兜底，仅 GBK 交付件，UTF-8 版与聚宽版本轮不同步更新）：
+#       v1.2.20 上线 AUD48 指数护栏后，实盘发现 QMT 对 000300.SH 用新接口 get_market_data_ex
+#       （前复权 front_ratio）偶发返回被除权调整过的异常点位（如 29.9077，真实值约 4481.90），
+#       护栏拦截后若只走补下载会陷入「拦截→补下载→还是坏数据→继续拦截」死循环，F2 被永久卡死。
+#       本版新增 _idx_fetch_with_fallback()：新接口被护栏拦截后自动降级老接口 get_history_data
+#       （int3 等比前复权 → 缺省口径），哪个先通过护栏用哪个，全失败才判不可信。
+#       纯取数层防御，零行为变更，不碰买卖；铁律不变：坚决不止损、扣费后赚钱才卖。
+#   ── v1.2.20 = AUD49（2026-10-13 用户指令：半小时日志改为10分钟日志，仅 GBK 交付件，UTF-8 版与聚宽版本轮不同步更新）：
+#       AUD45 半时诊断节流 _HDIAG_GAP 由 1800 秒（30 分钟）缩短为 600 秒（10 分钟），
+#       即每个启用标的每 10 分钟打印一次「为何没买/没卖」逐条诊断，
+#       便于盯盘更及时地看到信号变化与卡点；纯日志节流调整，零行为变更，
+#       不影响任何买卖判断，铁律不变：坚决不止损、扣费后赚钱才卖。
+#   ── v1.2.19 = AUD48（2026-10-13 首跑日志暴露缺陷修复，仅 GBK 交付件，UTF-8 版与聚宽版本轮不同步更新）：
+#       ① 半时诊断 limit_sell_date 空串 float() 报错：原用 float() 把日期当数字比较，
+#          无持仓时该字段为空串导致 could not convert string to float（10:00/10:31 各一次），
+#          改为 str() 字符串比较，纯日志修复，零行为变更；
+#       ② 指数日线收盘序列合理性护栏：000300.SH 均线出现 34.94（正常四位数 4481.90）异常值，
+#          疑似新接口偶发返回异常序列。新增 _index_closes_plausible() 校验点位区间 100~20000，
+#          越界即判不可信、触发补下载并保守拦截首仓（符合 F2 宁可错过不可错买）。
+#       两项均为防御性加固，铁律不变：坚决不止损、扣费后赚钱才卖。
+#   ── v1.2.18 = AUD47（2026-10-13 零预设独立审计加固，仅 GBK 交付件，UTF-8 版与聚宽版本轮不同步更新）：
+#       ① trend_follow_signal 数据不足时区分「趋势数据不足」与「真无信号」（仅日志，零行为变更）；
+#       ② stop() 停摆汇总加交易日门控（非交易日不误报停摆、不推送风控告警，仅影响停止时日志）；
+#       ③ handlebar 入口补建日志常开句柄（init 异常未建立时自动补一次，日志落盘更稳）。
+#       三项均为只影响日志/诊断的加固，不改变任何买卖判断；铁律不变：坚决不止损、扣费后赚钱才卖。
+#   ── v1.2.16 = AUD45（2026-10-12）：每30分钟「为何没买/没卖」诊断汇总日志——原 1800s 节流（AUD49 起改为 600s/10 分钟），纯日志不触发下单。
+#   ── 历史版本见下方 v1.2.15 说明：2026-10-04 回放闸加固 AUD43+AUD44（冷启动护栏 + 短时风暴熔断）+ 成交量单位自检日志。
+#    （以下为 v1.2.15 原文保留——
+#    ① 启动后前 30 根 bar 冷启动护栏，一律只记录不下单；② 5 秒内回调 >60 根 bar 触发短时风暴熔断，
+#   频率回落连续 5 秒自动解除。另在 handlebar 中新增成交量单位自检日志，打印「日均量(手)→换算上限(股)」，
+#   便于一眼看出参与率闸门用的 volume 单位是否正确。仅新增防护与日志，铁律不变：坚决不止损、扣费后赚钱才卖。
+#   仅修改 GBK 交付件；UTF-8 版与聚宽版本轮不同步更新）—— GBK 交付件唯一真源
+# ----------------------------------------------------------------------------
+#  ----------------------------------------------------------------------------
+#  【v1.2.1 直改版 · 唯一真源 · 治理规则】（2026-10-05 起，取代旧「生成链铁律」）
+#  · 本文件（GBK 编码）是广发交易端策略的唯一维护入口与唯一真源：
+#    所有修改直接在本文件进行，必须保持 GBK 编码不变（运行时中文字符串保持
+#    反斜杠uXXXX 转义形态，注释为 GBK 中文），避免编码转换产生乱码。
+#  · 旧生成链（母版 gf_qmt_native_nbbank_utf8.py / gen_native_multi.py /
+#    _build_native_multi_gbk.py / rebuild_all.py）已退役归档，严禁重跑——
+#    重跑会以旧管线逻辑覆盖本文件的直修改动（含 v1.2.1 的 save_m3 修复），
+#    交易端将回到带病版本。
+#  · 每次修改后的强制自检：GBK 解码 → compile() → 字符串字面量无非 ASCII 残留
+#    → 版本自检行（v1.2.2）核对 → 关键行为抽查。
+#  · UTF-8 版与聚宽版本轮不同步更新、保持原样；如需回测对齐另行处理。
+# ----------------------------------------------------------------------------
+#  运行环境：广发 QMT「模型交易界面」/ 大QMT 原生框架（init/handlebar 模式）
+#  运行方式：把本文件粘贴进 QMT 模型交易界面，以「实盘模式」运行。
+#            账号由界面选择注入为全局 account 变量（广发 QMT 的 __PyContext 无 account 属性）。
+#  重要说明：本文件使用 QMT 原生框架 API（init/handlebar/passorder），
+#            与 miniQMT 外部 Python 脚本（XtQuantTrader）是两套不同机制，
+#            不能混用，也不能互相粘贴。
+#  交易时段：仅在 A 股连续竞价时段（09:30~11:29:59 / 13:00~14:59:59）内交易，
+#            盘前/午休/盘后/周末/节假日自动跳过（handlebar 顶部时段门控）。
+#
+#  == 2026-09-22 对照广发官方内置Python文档全面对齐（dict.thinktrader.net/innerApi）==
+#  1) 行情历史：C.get_market_data_ex(fields, stock_code, period, ...) 按文档原型改位置传参
+#     （原 field_list=/stock_list= 关键字与原型不符会 TypeError）；回退接口 C.get_history_data
+#     按文档签名 (len, period, field, dividend_type=int, skip_paused) 修正——无第4个代码参数、
+#     dividend_type 为 int(3=等比前复权)、返回 dict{标的: list} 须按键取值。
+#  2) 涨跌停价：innerApi 的 C.get_full_tick 返回字段无 upLimit/downLimit，原从 tick 取价恒为 0，
+#     导致 涨停不买/跌停不卖 门控恒拒绝(永不交易)。改按文档用 C.get_instrument_detail 的
+#     UpStopPrice/DownStopPrice 字段（官方推荐获取最新一天涨跌停的方式），当日缓存。
+#  3) 资金/持仓：C.get_asset()/C.get_position() 不在 innerApi 文档中，改用文档标准接口
+#     get_trade_detail_data(acct,'STOCK','ACCOUNT')取 m_dAvailable 可用资金、
+#     get_trade_detail_data(acct,'STOCK','POSITION')按 m_strInstrumentID.m_strExchangeID
+#     匹配标的，字段 m_nVolume/m_nCanUseVolume/m_dCostPrice(兜底 m_dOpenPrice)。
+#  4) 补下载：download_history_data(stockcode, period, start, end) 是内置全局函数而非
+#     ContextInfo 方法（原 getattr(C,...) 永远取不到）。
+#  5) 内置Python单线程约束：去掉所有 time.sleep 重试等待（任一策略阻塞会拖住客户端内
+#     全部策略），改「失败即跳过、下一根 bar 自动重试」；行情/资金查询加结果缓存
+#     （innerApi 要求避免高频请求）。
+#
+#  == 2026-10-04 独立复审计修复（AUD12-AUD20，编号续接 2026-10-03 轮 AUD1-AUD11）==
+#  清单：广发GBK交付件独立复审计待修复清单_20261004.txt（A组必修 + B组拍板项）
+#  AUD12 回放闸：bar 时间戳落后真实时钟>120s 判为历史回放 bar，跳过全部交易逻辑
+#        （多标的交付件移除 is_last_bar 后的显式防护；get_bar_timetag 不可用时
+#         放行并一次性告警，保持旧行为由 quickTrade=1 与状态幂等兜底）。
+#  AUD13 四字段同口径取数：close/high/low/volume 在同一形态下一次取齐
+#        （原实现逐字段独立选形态，除权除息附近可能混拼「前复权收盘+不复权高低」）。
+#  AUD14 卖出在途委托确认：卖出冻结窗口过期且券商仍有持仓时，先查该标的当日委托——
+#        无活跃委托（卖单已废单/终结未完全成交）即按实际持仓恢复状态，
+#        不再无限延长冻结窗口（原实现止盈废单后该标的不买不卖死锁）。
+#  AUD15 目录治理：_FIXED_DIR 更新为当前工程目录（原硬编码 D 盘旧路径已不存在）；
+#        BASE_DIR 来源(env/file/fixed/cwd) 写入启动自检，兜底到 fixed/cwd 时
+#        醒目告警 + 风险事件（防状态台账静默分裂到意外目录）。
+#  AUD16 方向字段未知显式化：_read_order_direction 全部候选字段取不到时返回 None
+#        （原返回 48 把卖单误当买单）；has_live_buy_order 返回 (ok, live, unk, detail)，
+#        方向未知活跃委托单独计数、保守按在途登记但不与已知买单混淆，全部日志可见。
+#  AUD17 当日bar日期校验：fetch_hist_fields 返回「末根是否当日进行中bar」标志；
+#        指标切片/健全性基准/均量按已收盘口径自适应（确认无当日bar时不再误剔昨日）。
+#  AUD18（生成器）构建尾硬断言：关键符号恰好定义一次 + 整文件 compile，锚漂移拒绝出件。
+#  AUD19 止损告警接入 _notify_risk 外部通知链（维持「告警不自动卖」红线不变）。
+#  AUD20 时段门右端 150000 -> 145959（只砍 15:00 那根 bar；14:57-14:59 收盘集合竞价
+#        照常；母版/生成器两处交易门同步修改，展示用 _session_now/心跳保持 150000）。
+#
+#  == 2026-10-05 零预设重审修复（AUD21-AUD23，GBK 直改版 v1.2.1）==
+#  AUD21 save_m3 台账写盘修复：内部写函数定义名 _w 与调用名 _write 错配 → NameError，
+#        每次 save_m3 必然失败 → _M3_PERSIST_OK 翻 False → M2/M3 加仓熔断瘫痪，
+#        当日额度台账永不落盘（DAILY_ADD_CAP 随重启反复重置，单日上限被架空）。
+#        自 2026-09-30 分桶版 save_m3 引入起潜伏，历轮审计/测试均未覆盖。（已修复）
+#  AUD22 回放闸时间戳合理性兜底：解析年份不在 2000-2100 视为时间不可用，fail-open
+#        放行（防个别版本返回秒/异常值 → 全 bar 判回放 → 策略整体静默不交易）。
+#  AUD23 取数形态韧性恢复：首个成功形态不足 need 根时继续探测后续形态取首个
+#        足量者（修复 AUD13「首中即用」回归；同调用同口径原则不变）。
+#  治理：本文件改为 GBK 直改维护版（唯一真源），旧生成链退役归档，见文件头铁律节。
+#
+#  == 2026-10-07 拍板落地（AUD24，GBK 直改版 v1.2.2）==
+#  AUD24 上午交易门右端 113000 -> 112959（用户拍板 1B）：11:30 那根 bar 的委托
+#        落在午间休市开始之后（与 15:00 同构），不再发出；止盈/加仓信号顺延
+#        13:00 后重评（资金风险为零，消除拒单噪音与熔断计数虚增）。
+#        展示用 _session_now/心跳保持 11:30 口径不变。
+#
+#  == 2026-10-07 铁律重审修复（AUD25-AUD31，GBK 直改版 v1.2.3）==
+#  总纲铁律：坚决不止损、不赚钱不卖；策略止损动作一律不执行。除止损类动作外，其余问题一律修复。
+#  清单：广发GBK交付件零预设重审待修复清单_20261007.txt
+#  AUD25 账户回退留痕：resolve_account 定位失败回退到硬编码 DEFAULT_ACCT 时打印警告，
+#        不再静默（防账号配置写错后悄悄在错误账号下单）。
+#  AUD26 买入滑点对称：LIMIT_SLIP_PCT 0.0 -> 0.003，与卖出滑点 LIMIT_SLIP_PCT_SELL 对称
+#        （原买侧为 0 会低估真实买入成本、高估收益）。
+#  AUD27 max_position_pct 死参数注释：再次确认该参数不参与计算，仓位上限唯一来源是
+#        pyramid[0.50,0.25,0.10,0.05] 之和=0.90，修改本值不会改变加仓行为。
+#  AUD28 _account_free_cash 钳制：多标的 deployed 之和可能超账户现金，返回值钳制到 max(0,...)，
+#        消除负数可用现金导致的加仓判断失真。
+#  AUD29 在途台账损坏留痕：_pending_load 裸 except:pass 改为打印警告日志，仍空台账安全启动，
+#        但留痕便于人工确认是否有未成交买单（防重复开仓）。
+#  AUD30 止损告警标记复位：价格回升后复位 stop_loss_pending，仅复位状态标记、不执行任何卖出
+#        （铁律不受影响），使后续更深回撤仍能再次触发告警。
+#  AUD31 M2 联动 M3 软暂停：M2 金字塔加仓前检查今日 M3 已触发档数，达 M3_SOFT_PAUSE_LEVELS
+#        上限则联动跳过，与「单日盘中加仓节奏受控」意图一致。
+#
+#  == 2026-10-07 触发条件明细日志（AUD32，GBK 直改版 v1.2.4）==
+#  AUD32 买卖触发条件明细日志：在每次买入/卖出执行之前、以及无法成功买入/卖出时，
+#        统一输出「触发条件明细」记录，包含：触发类型、具体判断依据、相关参数值，
+#        便于人工核对与调试。覆盖 buy_shares / sell_all 两个收口函数的全部路径
+#        （首仓/续批/M2金字塔/M3阶梯/止盈/涨停卖出 及 各闸门拦截/下单失败）。
+#        仅输出日志，不改变任何下单与止损逻辑；hard_stop 仍保持禁用，铁律不受影响。
+#
+#  == 2026-10-08 第五轮零预设独立审计（AUD37，GBK 直改版 v1.2.7）==
+#  AUD37-1 首仓分批隔日续批：split_followup 仅记批次数不记批次日期，昨日首批成交后今日仍会续批，
+#        14:45 兜底补齐甚至无条件补买剩余批次（绕过 DAILY_ADD_CAP 当日额度）。新增 first_batch_date
+#        字段（首仓第 1 批成交日），续批仅限当日，跨日剩余批次作废，加仓由 M2/M3 接管。
+#  AUD37-2 涨跌停兜底估算按板块识别：get_limit_prices_safe 兜底固定 昨收×(1±10%)，对创业板(30)/
+#        科创板(68)(±20%)、北交所(8/4)(±30%) 标的全算错。新增 _limit_ratio_by_code 按代码前缀
+#        识别板块比例；当前标的宁波银行(002142 深市主板)行为不变。
+#  AUD37-3 _SUSP_VOL_BARS 重复定义清理：删除路径配置区残留的 int 定义，仅保留分标的 dict 定义。
+#  AUD37-4 启动自检周末口径：_session_now 改用 is_trade_day 判定，调休上班的周六不再误标「周末」
+#        （仅展示文字，不影响交易判断）。
+#
+#  == 2026-10-08 功能升级（AUD38，GBK 直改版 v1.2.8）：运行文件镜像同步 ==
+#  AUD38-1 镜像目录：新增 _MIRROR_DIR = 广发 QMT 运行端 userdata_mini\gf_qmt_mirror。
+#  AUD38-2 写后同步：状态/在途台账/M3台账/交易日志(含轮转.1~.5)/风险事件/交易日缓存/数据闸门告警
+#        每次写入后自动复制一份到镜像目录；告警标志删除时镜像同步删除。
+#  AUD38-3 启动自愈：init 时主目录文件缺失而镜像存在 -> 自动复制回主目录（防误删丢实盘状态）。
+#  AUD38-4 失败容错：镜像目录不可写仅节流告警（60s 一次），绝不影响主目录读写与交易。
+#
+#  == 2026-10-09 第七轮零预设独立审计（AUD39，GBK 直改版 v1.2.9）：死代码清理 ==
+#  AUD39-1 删除 _is_strategy_symbol：从未被调用（白名单判断实际使用 _is_strategy_stock）。
+#  AUD39-2 删除 get_position_detail：从未被调用（持仓查询实际统一使用 query_position_safe）。
+#  AUD39-3 删除 get_cash：从未被调用（现金查询实际统一使用 get_cash_safe）。
+#  （本轮另复核「突破策略限定投资金额」：首仓/续批/M2/M3 四通道均带 can_invest(预算×90%) +
+#    buy_shares 资金口径闸门(预算) + M2/M3 共享单日额度(9万) + 账户可用现金四道闸门，无突破路径。）
+#
+#  == 2026-10-09 第八轮零预设独立审计（AUD40，GBK 直改版 v1.2.10）：孤儿死代码清理 ==
+#  AUD40-1 删除 _strategy_universe：唯一调用者 _is_strategy_symbol 于 AUD39 删除后成为孤儿，
+#         现全文无人调用（含其模块级缓存 _STRATEGY_UNIVERSE）；删除不影响任何运行行为。
+#  （本轮零预设重读卖出通道/信号函数/止盈净到手口径/主流程门控链，重点排查项均无新问题；
+#    铁律「坚决不止损、扣费后赚钱才卖」在各卖出路径均按净到手口径复核在位。）
+#
+#  == 2026-10-09 第九轮零预设独立审计（AUD41，GBK 直改版 v1.2.11）==
+#  AUD41-1 首仓未买成因汇总：新增 _note_entry_block / _entry_block_summary，每个交易日 14:55 后
+#         输出一行「今日未开首仓，被挡环节：…」（暂停/结算冷却/在途未落账/持久化降级/当日涨停
+#         卖出过/个股非多头/大盘过滤/卖出冷却/不在时间窗/窗口已关闭/信号未成立/价格门未过/
+#         涨跌停价未知禁买）。空仓日必出：无任何拦截时输出兜底行（便于区分「没信号」与「程序没跑」）。仅写日志，不参与任何买卖判断。
+#  AUD41-2 死代码清理：删除保守四因子通道（conservative_factor_signal / calc_rsi / calc_bollinger
+#         及 entry_signal_full 的 conservative 分支）与 6 个专用参数（rsi_n / rsi_oversold /
+#         kdj18_n / kdj18_k_threshold / boll_n / boll_k）；删除死参数 trend_filter、max_invest。
+#         init_capital / hard_stop_dd_pct / MAX_INVEST_PER_SYMBOL / _subproc_read_bytes 仅加注释保留。
+#  AUD41-3 日志镜像节流：原实现每写一行日志即复制 6 个日志文件（本体 + .1~.5），单线程下 I/O
+#         放大明显；改为最多每 60s 一次且仅复制日志本体，轮转发生时与 stop 时各做一次完整镜像。
+#  AUD41-4 涨跌停估算补 ST 档：_limit_ratio_by_code 增加 ST/*ST → ±5%（原仅 ±10%/±20%/±30%
+#         三档，ST 标的的估算涨跌停价会偏大一倍）。当前标的宁波银行行为不变。
+#  （铁律不变：坚决不止损、扣费后赚钱才卖；hard_stop 保持禁用，止损仅告警不卖出。）
+#
+
+#  == 2026-10-09 实盘现场排障修复（AUD42 / AUD42-2，GBK 直改版 v1.2.12 -> v1.2.13）：镜像同步 ==
+#  现象（2026-10-09 08:54 实盘日志）：[镜像同步] 复制 gf_native_trade.log / 状态文件到广发镜像
+#        目录失败：Foribdden FileIO；且镜像目录内已躺着 10 个 10-08 的旧副本。
+#  根因：QMT 内置 Python 沙箱规则——目标文件不存在时写入正常，但目标一旦已存在，覆写一律被拒。
+#        镜像同步因此「只有第一次成功、之后次次失败」，副本冻结在首次写入的快照。
+#  根因补证（2026-10-09 复核代码）：沙箱按「目标是否已存在」判定——已存在文件的 open() 与
+#        os.replace 一律被拒（2026-09-24 实证，见 _lock_and_write_impl 注释）。
+#  修复：_mirror_copy 改走本文件里**已在实盘长期跑通**的写入通道 _lock_and_write_impl
+#        （写全新临时文件 → os.replace 原子替换 → 删目标再替换 → 删目标后新建写出，三级兜底），
+#        源文件读取走已验证的 _read_file_bytes（open → os.open → ctypes 三级链）。
+#        v1.2.13(AUD42-2)：初版「先删后拷」仍依赖删除/改名权限；改用上述已验证通道后
+#        不再依赖任何额外权限，与状态/日志写入完全同一条路径。
+#  影响面：仅镜像副本；主目录读写与全部交易逻辑零改动（铁律不变）。
+#
+
+#  == passorder 下单常量（已对照广发/迅投内置Python官方文档核对，2026-09-22 复核）==
+#  核对来源：dict.thinktrader.net/innerApi 交易函数页 + 快速开始页示例（23/24/1101/5/14 均在
+#  官方示例中出现）。实盘前仍建议用仿真/小资金先验证一笔，确认买/卖方向、选价类型与贵部版本一致。
+#    OP_BUY / OP_SELL       : 23=股票/ETF买入, 24=股票/ETF卖出            （已核对：OK）
+#    ORDER_TYPE            : 1101=单股单账号、按股/手普通委托             （已核对：OK）
+#    PRICE_TYPE            : 11=指定价/限价（price 传真实限价）——2026-09-24 13:53 起：
+#                             模拟盘连续两笔对手价(14)委托被拒（13:00/13:35 的 4700股），
+#                             改用限价单按最新价挂单；若限价单长期不成交，可将 _LIMIT_SLIP_PCT
+#                             调为 0.005（买上浮/卖下浮 0.5%）提高成交率。
+#                             （旧值 14=对手价，price 参数被忽略，规范传 0）
+#    QUICK_TRADE           : quickTrade 快速交易参数（AUD68 2026-10-16 对照官方文档修正）——
+#                             官方文档明确定义：0=逐K线生效（默认；信号暂存，K线走完才发、
+#                             未走完即丢弃）；2=立即下单（运行后立刻发委托，不等待不丢弃）。
+#                             本策略用 2：盘中每根 bar（约3秒）即时评估即时发单；回放防护与
+#                             防重复下单由本文件回放闸（AUD12/AUD43/AUD56）+ 在途台账承担，
+#                             不依赖该参数。
+#                             （旧注释「1=立即下单、2=历史bar也触发」与官方文档不符，已废止）
+# ============================================================================
+
+import os
+import math
+import json
+import time
+import threading
+import tempfile
+import traceback
+from datetime import datetime
+import hashlib
+
+# ---------------------------------------------------------------------------
+# 1. 基础配置
+# ---------------------------------------------------------------------------
+SYMBOLS = [
+    {"code": "002142.SZ", "name": "宁波银行", "capital_cap": 200000.0, "enabled": True,
+     "manual_takeover": False},   # AUD76：人工接管标志——True=该标的已移交人工处理，策略仅记账/告警，且释放其额度
+]
+# 注：v1.2.1 起生成链（gen_native_multi.py / symbols_config.py）已退役，本文件为 GBK 直改
+# 唯一真源；增删标的请直接改本清单，白名单 _STRATEGY_STOCK_NAMES 由本清单自动派生。
+def enabled_symbols():
+    return [dict(s) for s in SYMBOLS if s.get("enabled", False)]
+
+# AUD76(2026-10-19)：人工接管标的集合。返回 code 集合。
+#   置位后策略对该标的不做任何自动买卖决策（首仓/M2/M3/续批/止盈/涨停卖出全部跳过），
+#   只保留日志/风控告警；其 capital_cap 额度从策略总预算中释放（_account_free_cash / init）。
+def manual_takeover_codes():
+    return set(s["code"] for s in SYMBOLS
+               if s.get("enabled") and s.get("manual_takeover"))
+
+DEFAULT_ACCT = "8973786"      # 兜底资金账号（正常由界面注入全局 account 变量，此为最后兜底）
+
+# ---- 下单常量（对照广发原生框架文档核对，见文件头说明）----
+OP_BUY = 23                   # 股票买入
+OP_SELL = 24                  # 股票卖出
+ORDER_TYPE = 1101             # 单股单账号、按股/手普通委托（非限价；控价由 PRICE_TYPE=14对手价/11限价决定）
+PRICE_TYPE = 11                # 11=限价(price 传真实限价,按最新价挂单)；14=对手价(price 忽略传0)
+LIMIT_SLIP_PCT = 0.003  # AUD26(2026-10-07 铁律审计)：买入滑点与卖出对称；原为 0.0 会低估成本、高估收益           # 限价滑点(买入)：买价上浮该比例(0=严格按最新价；0.005=+0.5% 提高成交率)
+# 2026-09-29 审计修复 P2：卖出方向单侧滑点。买侧 0.0 会挂「恰好等于最新价」的限价买单，
+# 在上涨行情里通常能成交；但卖侧若同样严格挂最新价，行情急转直下时卖单可能长时间不成交，
+# 结果 180s 卖出在途冻结窗口过期后持仓被外部同步「复活」→ 旧卖单仍挂着而 M2/M3 可反向加仓。
+LIMIT_SLIP_PCT_SELL = 0.003    # 限价滑点(卖出)：卖价下浮 0.3%，压低止盈单不成交概率
+# ---- 券商真实费率（2026-10-19 用户提供，广发全佣价）----
+# AUD78(2026-10-19)：原实现佣金率写死万2.5，与实际券商费率不符，导致净到手盈亏被低估
+# （实际佣金更低 → 策略实际能承受的滑点/临界更多），账面保守过度。现改为券商真实费率：
+STOCK_COMMISSION_RATE    = 0.0000841  # 股票全佣金 万0.841（5元起收，买卖双向都收）——含经手费/证管费等全部规费
+STOCK_COMMISSION_MIN     = 5.0        # 佣金最低起收（不足 5 元按 5 元计）
+STOCK_STAMP_TAX_RATE     = 0.0005     # 印花税 万5（0.05%，仅卖出单边收）——国家规定，不可议价
+STOCK_TRANSFER_FEE_RATE  = 0.00001    # 过户费 万1（0.001%，买卖双向都收）——沪深均已统一
+# 其他品种费率（本策略仅交易 A 股，暂未使用，注释留存备查）：
+#   ETF 全佣金 万0.5（0.1 元起收）；港股通净佣金 万1；逆回购 1 折；可转债 十万分之4.4/5。
+# 口径说明：净到手=市值-佣金(含最低5元)-印花(卖出单边)-过户(双向)；
+#          买入成本=金额+佣金(含最低5元)+过户(双向)。
+# 铁律零触碰：只校准费用口径，不改任何买卖判定阈值/加仓档位/止盈规则。
+QUICK_TRADE = 2               # 2026-10-08 AUD35(第三轮零预设审计·用户拍板)：官方文档仅定义0=逐K线生效/2=立即下单，原值1无官方依据，改为2（立即下单，行为应与原实盘一致）
+# ---- 入场优化常量（2026-09-28 v9）：时间门 + 价格质量门 + 首仓分批 ----
+# 依据：《首仓「买在当日相对低位」优化方案》§4 推荐组合（方法 1+2+4，暂不做被动挂单）。
+# 本方案收益量级约 1%（非两位数），参数属待标定经验值；
+# ENTRY_OPT_ENABLED = False 可一键回到 v8 行为（零行为变更），用于观测期/回滚。
+ENTRY_OPT_ENABLED = True       # 总开关：False=完全回到 v8 行为（零行为变更，可回滚）
+ENTRY_WINDOWS = [(9, 45, 11, 20), (13, 20, 14, 50)]   # 允许开首仓/续批的时间窗（双开盘各避噪）
+ENTRY_SKIP_MIN = 15            # 开盘后最小静默分钟数（窗口起点已>=该值，保留作独立护栏）
+ENTRY_DEADLINE = (14, 50)      # 首仓窗口关闭时刻；之后当日不再开首仓
+PQ_OPEN_TOL = 0.000            # 价格门G1：price <= 当日开盘价*(1+该值)
+PQ_PULLBACK = 0.008            # 价格门G2：price <= 当日最高价*(1-该值)，即距当日高点已回撤>=0.8%
+PQ_MA20_TOL = 0.005            # 价格门G3：price <= MA20*(1+该值)
+PQ_FALLBACK_HHM = (14, 35)     # 该时刻后放宽价格门：额外允许 price <= 当日VWAP
+PQ_FALLBACK_VWAP = True        # 是否启用 VWAP 放宽（tick 无 amount 字段时自动忽略）
+FIRST_SPLIT = [0.40, 0.30, 0.30]   # 首仓分批占比（拆不出第 2 批 1 手时自动退化为单笔）
+SPLIT_GAP_MIN = 20             # 续批与首批的最小间隔（分钟）
+SPLIT_PRICE_TOL = 0.005        # 续批价格上限：第 1 批价*(1+该值)
+SPLIT_GUARANTEE = True         # 兜底：临近窗口关闭时补齐剩余批次（跳过价格门与间隔）
+SPLIT_GUARANTEE_HHM = (14, 45) # 兜底触发时刻
+SPLIT_MAX_BATCH = 3            # 当日首仓批次硬上限
+
+
+# ---- 日志/状态文件路径（QMT 内嵌环境 __file__ 不可用，退化为固定目录）----
+# AUD15 修复(2026-10-04)：原硬编码 D 盘旧路径（D:\桌面\666666\quant_nbbank）已不存在，
+# 沙箱下 __file__ 不可用且 GF_BASE_DIR 未设置时会静默落到 QMT 进程目录(bin.x64)，
+# 状态/台账/在途单与开发目录分裂两份 = 重启丢状态 -> 重复开仓事故链的源头。
+# 现指向当前工程目录，并以 _BASE_DIR_SRC 记录命中来源，init 自检兜底来源时告警。
+# 优先级: __file__ 所在目录 -> 本机固定目录 -> QMT 进程当前目录(bin.x64)
+_FIXED_DIR = "E:\\桌面\\666666\\nbbank"
+# 优先级（2026-09-24 增加环境变量口）：GF_BASE_DIR（测试隔离/显式指定）-> __file__ 所在目录
+#                                    -> 本机固定目录 -> QMT 进程当前目录(bin.x64)
+try:
+    _ENV_DIR = os.environ.get("GF_BASE_DIR") or ""
+except Exception:
+    _ENV_DIR = ""
+_BASE_DIR_SRC = "cwd"           # AUD15：BASE_DIR 命中来源（env/file/fixed/cwd），init 自检输出
+if _ENV_DIR:
+    _BASE_DIR = _ENV_DIR
+    _BASE_DIR_SRC = "env"
+else:
+    try:
+        _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        _BASE_DIR_SRC = "file"
+    except Exception:
+        if os.path.isdir(_FIXED_DIR):
+            _BASE_DIR = _FIXED_DIR
+            _BASE_DIR_SRC = "fixed"
+        else:
+            _BASE_DIR = os.getcwd()
+            _BASE_DIR_SRC = "cwd"
+STATE_FILE = os.path.join(_BASE_DIR, "gf_native_multi_state.json")     # 多标的持仓状态(按code分桶)
+M3_STATE_FILE = os.path.join(_BASE_DIR, "gf_native_multi_m3.json")       # 多标的盘中加仓状态(按code分桶)
+TRADE_LOG = os.path.join(_BASE_DIR, "gf_native_trade.log")       # 交易决策日志
+# P0-1 修复(2026-10-01)：在途买单台账独立持久化——内存台账 _PENDING_BUYS 进程重启即归零，
+# 而状态文件在 QMT IO 沙箱下可能写入失败；在途台账丢失 + 重启 = 重复开首仓（对抗测试 C 组复现）。
+PENDING_FILE = os.path.join(_BASE_DIR, "gf_native_pending.json")  # 在途买单台账持久化
+# AUD59(2026-10-14)：已清仓盈亏台账持久化——sell_all 卖出成功即记账（按保守成交价×卖出股数
+# 扣费后减持仓成本，得本次净到手盈亏），累计到 _PNL_HISTORY 并落盘。重启读回，盈亏历史不丢。
+# 纯记账 + 每30分钟汇总日志（_pnl_display_log），零交易行为变更，铁律不受影响。
+PNL_HISTORY_FILE = os.path.join(_BASE_DIR, "gf_pnl_history.json")
+# P1-5 修复(2026-10-01)：数据闸门告警标志文件（外部看门狗可读；模态弹窗已移除——
+# 无超时弹窗会阻塞 QMT 内置 Python 单线程，无人值守时全部策略无限期停摆）
+DATA_GATE_ALERT_FILE = os.path.join(_BASE_DIR, "data_gate_alert.json")
+TRADEDAY_CACHE = os.path.join(_BASE_DIR, "gf_tradeday_cache.json")  # A股交易日历缓存
+
+# ---- AUD38(2026-10-08 功能升级)：运行文件镜像同步到广发 QMT 用户数据目录 ----
+# 用户确认方案（2026-10-08）：nbbank(_BASE_DIR) 为主目录（权威，读取优先），广发 QMT 运行端
+# userdata_mini 下 gf_qmt_mirror 为镜像副本；每次写入后自动复制；启动时主目录缺失自动从镜像
+# 补回；镜像写失败仅告警（60s 去重），绝不影响主目录读写与交易。
+_MIRROR_DIR = r"C:\广发证券QMT量化交易系统 - 交易端 - 2\userdata_mini\gf_qmt_mirror"
+_MIRROR_WARN_GAP = 60.0        # 镜像写失败告警去重间隔（秒）
+_MIRROR_LAST_WARN = 0.0        # 上次镜像告警时间戳
+
+
+def _mirror_copy(relname):
+    """把主目录(_BASE_DIR)下某个运行文件复制到镜像目录(_MIRROR_DIR)。
+    relname 为相对文件名（如 'gf_native_multi_state.json'）；目录不存在自动创建；
+    AUD42(2026-10-09)：改走 _lock_and_write_impl 已验证写入通道（临时文件 + os.replace）。
+    任何失败仅节流告警，绝不影响主目录读写与交易。"""
+    global _MIRROR_LAST_WARN
+    try:
+        if not _MIRROR_DIR:
+            return
+        _src = os.path.join(_BASE_DIR, relname)
+        if not os.path.isfile(_src):
+            return
+        try:
+            if not os.path.isdir(_MIRROR_DIR):
+                os.makedirs(_MIRROR_DIR)
+        except Exception:
+            pass
+        _dst = os.path.join(_MIRROR_DIR, relname)
+        # AUD42(2026-10-09 实盘现场排障)：QMT 沙箱按「目标是否已存在」判定——已存在文件的
+        # open() 与 os.replace 一律被拒（2026-09-24 实证，见 _lock_and_write_impl 注释），
+        # shutil.copy2 直接覆盖镜像旧文件必然报 Foribdden FileIO。这正是镜像同步
+        # 「只有第一次成功、之后次次失败」的根因。
+        # 改为复用本文件里**已在实盘长期跑通**的写入通道 _lock_and_write_impl：
+        #   写全新临时文件 → os.replace 原子替换 → 删目标再替换 → 删目标后新建写出（三级兜底）；
+        # 源文件读取同样走已验证的 _read_file_bytes（open → os.open → ctypes 三级链）。
+        # max_bytes 传 32MB：交易日志轮转上限 10MB，留足余量避免被截断。
+        _blob, _rerr = _read_file_bytes(_src, 33554432)
+        if _blob is None:
+            raise IOError("读取源文件失败(%s)" % _rerr)
+        _lock_and_write_impl(_dst, lambda _fp: _fp.write(_blob))
+    except Exception as _e:
+        _tw = time.time()
+        if _tw - _MIRROR_LAST_WARN >= _MIRROR_WARN_GAP:
+            _MIRROR_LAST_WARN = _tw
+            try:
+                log("[镜像同步] 复制 %s 到广发镜像目录失败：%s（不影响主目录读写与交易，60s 后自动重试）"
+                    % (relname, _e))
+            except Exception:
+                pass
+
+
+def _mirror_copy_trade_logs():
+    """AUD38：同步交易日志本体及轮转历史（主目录存在才复制）。
+
+    AUD53(2026-10-13)：备份份数改为随 LOG_BACKUP_COUNT 动态生成——原实现硬编码
+    .1~.5，份数调大后高序号备份不会被镜像，镜像与主目录留存集不一致。
+    """
+    for _sfx in [""] + [".%d" % _i for _i in range(1, LOG_BACKUP_COUNT + 1)]:
+        _rel = "gf_native_trade.log" + _sfx
+        if os.path.isfile(os.path.join(_BASE_DIR, _rel)):
+            _mirror_copy(_rel)
+
+
+_MIRROR_LOG_LAST = 0.0     # AUD41：日志镜像上次同步时间戳
+_MIRROR_LOG_GAP = 60.0     # AUD41：日志镜像最小同步间隔（秒）
+
+
+def _mirror_trade_logs_throttled():
+    """AUD41：日志镜像节流——最多每 _MIRROR_LOG_GAP 秒同步一次交易日志本体。
+
+    原实现每写一行日志都调用 _mirror_copy_trade_logs()（复制本体 + .1~.5 共 6 个文件），
+    单线程环境下 I/O 放大明显（轮转后单次可达数十 MB）。现改为：
+      · 周期性同步：最多 60s 一次，仅复制日志本体（增量小）；
+      · 轮转发生时（_rotate_log_if_needed）与 stop 时：各做一次完整镜像（含 .1~.5）。
+    日志内容不丢，仅降低复制频率。
+    """
+    global _MIRROR_LOG_LAST
+    _t = time.time()
+    if _t - _MIRROR_LOG_LAST < _MIRROR_LOG_GAP:
+        return
+    _MIRROR_LOG_LAST = _t
+    _mirror_copy("gf_native_trade.log")
+
+
+def _mirror_remove(relname):
+    """AUD38：删除主目录某个运行文件时同步删除镜像副本（如数据就绪告警标志）。"""
+    try:
+        if not _MIRROR_DIR:
+            return
+        _dst = os.path.join(_MIRROR_DIR, relname)
+        if os.path.isfile(_dst):
+            os.remove(_dst)
+    except Exception:
+        pass
+
+
+def _mirror_restore(relname):
+    """AUD38 启动自愈：主目录文件缺失但镜像存在时，从镜像复制回主目录（防误删丢实盘状态）。"""
+    try:
+        if not _MIRROR_DIR:
+            return
+        _src = os.path.join(_BASE_DIR, relname)
+        if os.path.isfile(_src):
+            return
+        _dst = os.path.join(_MIRROR_DIR, relname)
+        if not os.path.isfile(_dst):
+            return
+        import shutil
+        shutil.copy2(_dst, _src)
+        try:
+            log("[镜像同步] 主目录缺失 %s，已从广发镜像目录自动恢复" % relname)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _mirror_restore_all():
+    """AUD38：启动时对全部运行文件执行自愈恢复（主缺镜有才补回）。"""
+    for _rel in ("gf_native_multi_state.json", "gf_native_pending.json",
+                 "gf_native_multi_m3.json", "gf_native_trade.log",
+                 "gf_risk_events.log", "gf_tradeday_cache.json",
+                 "data_gate_alert.json"):
+        _mirror_restore(_rel)
+
+# ---------------------------------------------------------------------------
+# 1.5 交易日判断（2026-09-25 新增，12-25 刷新逻辑升级）—— 覆盖周末 + 法定节假日 + 调休安排
+# ---------------------------------------------------------------------------
+# 数据源：akshare.tool_trade_date_hist_sina()  →  A股全部交易日（含调休工作日、排除节假日）
+# 缓存策略：JSON 文件缓存，满足以下任一条件即重新拉取：
+#   (a) 缓存覆盖的最后交易日 < 今天（明年了，需要新一年的节假日安排）
+#   (b) 缓存超过 30 天（可能有新节假日安排发布）
+#   (c) 每年 12 月（元旦前，交易所通常发布次年节假日安排）强制重拉
+#   (d) 每年 1 月（元旦后，节假日安排应已发布）强制重拉
+# 降级链：akshare在线 → 本地JSON缓存 → 仅周末判断
+_TRADEDAY_SET = None          # 内存缓存：set of 'YYYY-MM-DD'
+_TRADEDAY_LAST_DATE = ""      # 缓存覆盖的最后交易日 'YYYY-MM-DD'
+_TRADEDAY_FETCHED_AT = ""     # 缓存拉取时间 'YYYY-MM-DD HH:MM:SS'
+_TRADEDAY_LAST_CHECK = ""     # 上次初始化的日期（避免同一 init 内重复拉取）
+
+
+_TRADEDAY_REFRESH_INTERVAL = 30   # 缓存超过多少天强制刷新
+
+
+def _fetch_trade_dates_from_akshare():
+    """拉取 A 股全部交易日列表，返回 (set, max_date_str) 或 (None, '')（失败）。"""
+    try:
+        import akshare as _ak
+        _df = _ak.tool_trade_date_hist_sina()
+        if _df is None or len(_df) == 0:
+            return None, ""
+        _col = _df.columns[0]
+        _out = set()
+        _max = ""
+        for _v in _df[_col].values:
+            try:
+                if hasattr(_v, "strftime"):
+                    _s = _v.strftime("%Y-%m-%d")
+                else:
+                    _s = str(_v)[:10]
+                _out.add(_s)
+                if _s > _max:
+                    _max = _s
+            except Exception:
+                pass
+        return (_out, _max) if _out else (None, "")
+    except Exception:
+        return None, ""
+
+
+def _load_trade_dates_from_cache():
+    """从本地 JSON 缓存加载交易日集合，返回 (set, last_date, fetched_at) 或 (None, '', '')。"""
+    try:
+        _blob, _err = _read_file_bytes(TRADEDAY_CACHE)
+        if _blob is None:
+            return None, "", ""
+        _data = json.loads(_blob.decode("utf-8"))
+        if isinstance(_data, dict) and "trade_dates" in _data:
+            return (set(_data["trade_dates"]),
+                    _data.get("last_date", ""),
+                    _data.get("fetched_at", _data.get("refresh_date", "")))
+    except Exception:
+        pass
+    return None, "", ""
+
+
+def _save_trade_dates_cache(date_set, last_date):
+    """把交易日集合写入 JSON 缓存文件。"""
+    try:
+        _payload = {
+            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_date": last_date,
+            "trade_dates": sorted(date_set),
+        }
+        def _w(fp):
+            fp.write(json.dumps(_payload, ensure_ascii=False).encode("utf-8"))
+        _lock_and_write(TRADEDAY_CACHE, _w)
+        _mirror_copy("gf_tradeday_cache.json")   # AUD38：镜像同步到广发 QMT 目录
+    except Exception:
+        pass
+
+
+def _should_refresh_cache(today_date, cache_last_date, cache_fetched_at):
+    """判断缓存是否需要刷新。
+
+    返回 (need_refresh: bool, reason: str)
+    """
+    # (a) 缓存覆盖的最后交易日 < 今天 → 明年了，必须重拉
+    if cache_last_date:
+        try:
+            _cache_last = datetime.strptime(cache_last_date[:10], "%Y-%m-%d").date()
+            if _cache_last < today_date:
+                return True, f"缓存覆盖到{cache_last_date}，已过期"
+        except Exception:
+            pass
+
+    # (b) 缓存超过 N 天 → 可能有新节假日安排
+    if cache_fetched_at:
+        try:
+            _fetched = datetime.strptime(cache_fetched_at[:10], "%Y-%m-%d").date()
+            _delta = (today_date - _fetched).days
+            if _delta >= _TRADEDAY_REFRESH_INTERVAL:
+                return True, f"缓存已{_delta}天未刷新"
+        except Exception:
+            pass
+
+    # (c) 每年 12 月（元旦前）→ 交易所通常发布次年节假日安排
+    if today_date.month == 12:
+        if cache_fetched_at:
+            try:
+                _fetched = datetime.strptime(cache_fetched_at[:10], "%Y-%m-%d").date()
+                if _fetched.year < today_date.year or _fetched.month < 12:
+                    return True, "12月元旦前强制刷新（等待次年节假日安排）"
+            except Exception:
+                pass
+        else:
+            return True, "12月元旦前强制刷新（无缓存）"
+
+    # (d) 每年 1 月（元旦后）→ 节假日安排应已发布
+    if today_date.month == 1:
+        if cache_fetched_at:
+            try:
+                _fetched = datetime.strptime(cache_fetched_at[:10], "%Y-%m-%d").date()
+                if _fetched.year < today_date.year:
+                    return True, "1月元旦后强制刷新（新一年节假日安排应已发布）"
+            except Exception:
+                pass
+        else:
+            return True, "1月元旦后强制刷新（无缓存）"
+
+    return False, ""
+
+
+def _init_trade_day_set():
+    """初始化交易日集合：优先 akshare 在线拉取，失败则读缓存，再失败则 None。"""
+    global _TRADEDAY_SET, _TRADEDAY_LAST_DATE, _TRADEDAY_FETCHED_AT, _TRADEDAY_LAST_CHECK
+    _today_date = datetime.now().date()
+    _today_str = _today_date.strftime("%Y-%m-%d")
+
+    # 同一自然日内已初始化过 → 直接返回
+    if _TRADEDAY_SET is not None and _TRADEDAY_LAST_CHECK == _today_str:
+        return True
+
+    # 先尝试从缓存加载，再决定是否需要在线刷新
+    _cached_set, _cached_last, _cached_fetched = _load_trade_dates_from_cache()
+
+    _need_refresh = True   # 默认尝试在线拉取
+    if _cached_set is not None:
+        _need_refresh, _reason = _should_refresh_cache(
+            _today_date, _cached_last, _cached_fetched)
+        if not _need_refresh:
+            # 缓存仍然有效 → 直接用
+            _TRADEDAY_SET = _cached_set
+            _TRADEDAY_LAST_DATE = _cached_last
+            _TRADEDAY_FETCHED_AT = _cached_fetched
+            _TRADEDAY_LAST_CHECK = _today_str
+            return True
+
+    # 在线拉取
+    _online_set, _online_last = _fetch_trade_dates_from_akshare()
+    if _online_set is not None:
+        _TRADEDAY_SET = _online_set
+        _TRADEDAY_LAST_DATE = _online_last
+        _TRADEDAY_FETCHED_AT = _today_str
+        _TRADEDAY_LAST_CHECK = _today_str
+        _save_trade_dates_cache(_online_set, _online_last)
+        return True
+
+    # 在线失败 → 退回到缓存
+    if _cached_set is not None:
+        _TRADEDAY_SET = _cached_set
+        _TRADEDAY_LAST_DATE = _cached_last
+        _TRADEDAY_FETCHED_AT = _cached_fetched
+        _TRADEDAY_LAST_CHECK = _today_str
+        return True
+
+    # 全部失败 → 降级为仅周末判断
+    _TRADEDAY_SET = None
+    _TRADEDAY_LAST_DATE = ""
+    _TRADEDAY_FETCHED_AT = ""
+    _TRADEDAY_LAST_CHECK = _today_str
+    return False
+
+
+def is_trade_day(today=None):
+    """判断给定日期是否为 A 股交易日（覆盖周末 + 法定节假日 + 调休）。
+
+    参数 today: datetime.date / datetime / 'YYYY-MM-DD' / None(=今天)
+    返回 (is_trade: bool, source: str):
+      source ∈ {'akshare'(在线拉取), 'cache'(本地缓存), 'weekend_fallback'(仅周末), 'unknown'(无法判断)}
+    """
+    if today is None:
+        _d = datetime.now().date()
+    elif isinstance(today, str):
+        _d = datetime.strptime(today[:10], "%Y-%m-%d").date()
+    elif hasattr(today, "date"):
+        _d = today.date()
+    else:
+        _d = today
+    _key = _d.strftime("%Y-%m-%d")
+
+    _init_trade_day_set()
+
+    if _TRADEDAY_SET is not None:
+        # 在线拉取且日期在缓存覆盖范围内 → akshare
+        # 其他（缓存恢复 / 缓存覆盖不到但在缓存内）→ cache
+        _src = "akshare" if (_TRADEDAY_FETCHED_AT and _TRADEDAY_FETCHED_AT[:10] == _key) else "cache"
+        return (_key in _TRADEDAY_SET, _src)
+
+    # 降级：仅判断周末
+    _wd = _d.weekday()   # 0=Monday, 6=Sunday
+    if _wd >= 5:
+        return (False, "weekend_fallback")
+    # 周一到周五但无法确认（akshare 拉不到 + 无缓存）→ 防御拦截（2026-10-01 P3-6 修复：
+    # 原为"保守放行"，若非交易日 QMT 仍推送 bar，可能误触发交易逻辑；宁可错过不可错买）
+    return (True, "unknown")   # AUD74(2026-10-19) P0热修复：工作日无法确认时原函数隐式返回 None，导致 init/handlebar 五处解包崩溃。按 2026-10-01 P3-6 原设计故意默认放行（非交易时段由顶部时段门控兑底拦截）
+
+
+def previous_trading_day(day_str, max_back=15):
+    """上一交易日（YYYY-MM-DD）——AUD68(2026-10-16) 补齐缺失函数。
+    此前 _hdiag_log 调用本函数但全文未定义，NameError 被 try/except 吞掉，半时诊断的
+    「指标末根日期」退化为占位文字。优先用交易日集合（覆盖节假日/调休），集合不可用时
+    按自然日跳过周末回退；任何异常返回空串（调用方已有兜底）。"""
+    try:
+        from datetime import timedelta as _td68
+        _d = datetime.strptime(str(day_str)[:10], "%Y-%m-%d").date()
+        _init_trade_day_set()
+        for _i in range(1, max_back + 1):
+            _p = _d - _td68(days=_i)
+            _ps = _p.strftime("%Y-%m-%d")
+            if _TRADEDAY_SET is not None:
+                if _ps in _TRADEDAY_SET:
+                    return _ps
+            elif _p.weekday() < 5:
+                return _ps
+        return (_d - _td68(days=1)).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# 1.6 策略版本（全平台统一版本号：母版/生成器/QMT交付件/聚宽版 对齐，init 打印版本自检）
+# ---------------------------------------------------------------------------
+STRATEGY_VERSION = "v1.2.47"     # AUD78(2026-10-19) 券商真实费率落地（佣金万0.841/5元起收）+ AUD76 人工接管 + AUD77 冷启动取先到/减仓档位重置；v1.2.46 -> v1.2.47。
+STRATEGY_BUILD = "2026-10-19"   # 构建日期（每次重建交付件时由生成器核对一致；每次落地修改同步 bump，便于实盘日志辨认在跑版本）
+
+# ---- 数据就绪拦截闸门（2026-09-28）：所需数据未就绪 -> 拦截交易 + 列清单 ----
+# P1-5 修复(2026-10-01)：移除模态弹窗（无超时 MessageBoxW 阻塞内置 Python 单线程，
+# 无人值守时全部策略无限期停摆），改为醒目日志 + 告警标志文件（DATA_GATE_ALERT_FILE）；
+# 如需恢复交互式弹窗，须显式设置环境变量 GF_DATA_GATE_POPUP=1（自带 600s 节流），
+# 且仅限有人值守场景——弹窗期间同客户端内其它策略同样被阻塞。
+DATA_GATE_ENABLED = True        # 总开关：False=完全回到无闸门行为（可回滚）
+DATA_GATE_CHECK_TTL = 60.0      # 就绪检查结果缓存秒数（避免每根 bar 重复取数）
+DATA_GATE_FAIL_TTL = 10.0       # P2-3 修复(2026-10-01)：未就绪(失败)态负缓存秒数——
+                                # 此前只有"通过"态走缓存，数据异常时每根 bar 重复探测
+                                # 行情接口（每标的最多 5 形态×4 字段 + 指数），数据源最异常
+                                # 的时候接口压力最大（正反馈）。失败结果 10 秒内不重复探测。
+DATA_GATE_POPUP_GAP = 600.0     # 告警日志/标志文件刷新最小间隔秒（首缺必报）
+DATA_GATE_POPUP = os.environ.get("GF_DATA_GATE_POPUP", "0") == "1"   # 默认不弹窗（P1-5）
+
+# ---------------------------------------------------------------------------
+# 2. 策略参数（与 miniQMT 版 qmt_strategy.py 完全一致，单一真源）
+# ---------------------------------------------------------------------------
+PARAMS = {
+    # 信号
+    "signal_mode": "trend_hybrid",   # hybrid + 趋势跟随(MA5金叉/回踩MA20) + 底背离
+    "kdj_period": 9, "kdj_k_threshold": 25,
+    "wr_period": 14, "wr_threshold": 85,
+    "dip_trigger_pct": 0.02,         # 日内跌幅超 2% 也触发首仓
+    "divergence_n": 14,
+    # 金字塔加仓
+    "pyramid": [0.50, 0.25, 0.10, 0.05],
+    "add_step_pct": 0.02,            # 每再跌 2% 加下一档
+    # 止盈（固定+移动）
+    #   ★ 参数选型已回测锁定（2026-09-28 第二轮 · 回撤优先）：384 组网格 + 33 个滚动半年窗口
+    #     采纳 C 组「4% / 3%+2%」—— 最差回撤 37.65% -> 27.65%（-10.0pp），
+    #       代价：滚动均收益 8.72% -> 6.00%。用户明确选择「回撤优先」（2026-09-28 拍板）。
+    #     否决 A 组「8% / 5%+3%」：滚动均收益/中位/Calmar 三项第一，但最差回撤 37.65% 过高。
+    #     否决 B 组「6% / 4%+4%」：33 窗口 0 胜 26 负、回撤无改善（双输）。
+    #     复现：python _tune_tp_grid.py（全网格）  python _tune_roll.py（滚动对比）
+    "take_profit_pct": 0.04, "take_profit_mode": "both",
+    "trailing_activate_pct": 0.03, "trailing_dd_pct": 0.02,
+    # 风控
+    "stop_loss_pct": 0.06, "max_drawdown_pct": 0.08, "hard_stop_dd_pct": None,   # AUD41：hard_stop_dd_pct=None 即硬止损关闭（铁律：坚决不止损）；结构保留，勿启用
+    "ma_short": 20, "ma_long": 60,
+    # 大盘过滤（F2，2026-09-28 框架级降回撤 · 回测锁定）：首仓额外要求沪深300 MA20>=MA60
+    #   回测（33 个滚动半年窗口）：最差回撤 27.65% -> 9.45%、Calmar 0.217 -> 0.740、
+    #     回撤>20% 窗口 4 -> 0、2023H2 灾难段 -19.82% -> +4.88%；代价牛市少赚约 3.8pp。
+    #   只挡首仓——加仓/止盈/躺平/冷却/v9 全部不变；全程只在买入侧做减法，亏损绝不卖（红线零触碰）。
+    #   数据异常语义（与回测 idx_bull[i]=False 一致）：指数取不到/不足 MA_LONG 根 -> 拦截首仓。
+    #   复现：python _tune_frame.py / _tune_frame2.py
+    "market_filter": True, "market_filter_index": "000300.SH",
+    # AUD46(2026-10-12)：个股极强信号可豁免 F2 大盘过滤（默认关闭，2026-10-12 回测 Calmar +68% 后启用）
+    #   开启后仅在 F2 未通过时评估：个股多头 bull=True 且首仓信号成立(KDJ/WR/跌幅/底背离/趋势任一)
+    #   且量能放量确认或趋势跟随成立 -> 视为极强信号，允许首仓；否则仍按 F2 拦截。
+    #   仅影响首仓买入门（mkt_gate_ok），不触碰加仓/止盈/躺平/冷却/v9 任何其他路径。
+    "f2_exempt_on_strong": False,  # AUD66(2026-10-16)：AUD46 豁免已关闭（用户拍板）；如需回滚改回 True：个股极强信号可豁免 F2（2026-10-12 回测 Calmar +68% 后启用）
+    # 趋势跟随
+    "trend_ma_fast": 5, "trend_ma_mid": 20, "trend_ma_slope_n": 5,
+    #   trend_max_above_pct：回测实测 0.02~0.50 结果完全相同（趋势路径触发时
+    #     price 高于 MA20 的幅度 p99=8.4%、仅 2 次超过 6%），属不敏感参数；
+    #     保持 6% 保守值，与 v9 价格门 G3（<=MA20*1.005）方向一致。
+    "trend_pullback_pct": 0.02, "trend_max_above_pct": 0.06,
+    # 成交量确认
+    "volume_confirm": True, "volume_short_n": 3, "volume_long_n": 20, "volume_ratio": 1.2,
+    # AUD41：保守四因子通道已删除（死代码）——原 rsi_n / rsi_oversold / kdj18_n /
+    #   kdj18_k_threshold / boll_n / boll_k 六参数一并移除，勿再添加。
+    # 资金
+    "init_capital": 200000.0,   # AUD41：本参数当前不生效（仅 check_hard_stop 读取，而 hard_stop_dd_pct=None 使其永不执行）；结构保留，勿依赖
+    # max_position_pct：仅文档性参数，不参与任何计算（实际仓位上限由 pyramid 之和 0.90
+    # 与 init_capital 隐含）。P3-1(2026-10-01)：此前无标注，调低它期望降仓实际零效果。
+    # AUD27(2026-10-07 铁律审计)：再次确认——本参数为死参数，仓位上限唯一来源是
+    # pyramid[0.50,0.25,0.10,0.05] 之和=0.90。修改本值不会改变任何加仓行为，勿再尝试。
+    # AUD33(2026-10-08 零预设独立审计)：已转正——can_invest 现按 cap×max_position_pct 作单标的
+    # 硬上限（当前值 0.90 与 pyramid 隐含上限一致，行为不变；修改本值将整体调节单标的仓位上限）。
+    "max_position_pct": 0.90, "lot_size": 100,
+    # P3-6 修复(2026-10-01)：流动性/参与率闸门——单笔买入股数不超过近 20 根已收盘
+    # bar 平均成交量的该比例。当前 20 万预算对宁波银行（日均成交额数亿）无实际约束，
+    # 但 symbols_config 预留的低流动性标的扩容时防止单笔订单占当日成交量显著比例
+    # （滑点与冲击成本失控）。数据源为已缓存的 y_vols，无额外行情开销。
+    "max_participation_pct": 0.01,
+    # P2-2 修复(2026-10-01)：价格健全性断言阈值——最近已收盘 bar 收盘价与实时价偏差
+    # 超过该比例判数据异常（可捕获复权口径错配/停牌残留价/脏数据），本根 bar 跳过交易。
+    # 暴跌日个股单日振幅极少超过 10%，该阈值不会误伤正常行情。
+    "hist_price_sanity_pct": 0.10,
+}
+
+# 盘中阶梯加仓（M3）：相对当日开盘价的盘中实时跌幅，独立于 DCA 金字塔
+# 每跌 2.5% 加 0.6 万；每档每日仅触发 1 次；累计上限 3 万
+# 2026-09-28 资金口径 33 万 -> 20 万，本组子额度按 20/33 = 0.606 等比缩放
+# （原 1 万/档、日限 5 万 -> 0.6 万/档、日限 3 万），以保持与 33 万口径相同的风险比例。
+M3_LEVELS = [(0.025, 6000.0), (0.05, 6000.0), (0.075, 6000.0), (0.10, 6000.0)]
+M3_DAILY_CAP = 30000.0
+# P2 修复(2026-09-30)：M3 软暂停——极端暴跌日连续触发多档后不再机械加满，
+# 保留剩余档位额度等待企稳；人工如需继续加仓可手动下单（不违反 R2 熔断红线）。
+M3_SOFT_PAUSE_LEVELS = 2
+
+# ---- P0 优化开关（2026-08-26 回测确认，见 backtest_optimize.py / backtest_final_report.html）----
+# O1 卖出冷却：止盈全平后 STOP_COOLDOWN_DAYS 个自然日内禁止重新开首仓（加仓不受限）。
+#    回测：三区间平均收益 +4.04pp，唯一三区间全胜开关。miniQMT 版字段存在但从未赋值（缺陷），此处补全。
+STOP_COOLDOWN_DAYS = 3
+# O2 M2/M3 共享单日加仓额度：金字塔加仓(M2) + 盘中阶梯加仓(M3) 当日合计不超过 DAILY_ADD_CAP。
+#    修复「M2/M3 互不感知、同日加仓过猛」缺陷；回测日线无法体现（M2/M3 为盘中逻辑），实盘保护价值明确。
+#    2026-09-28 随 20 万资金口径等比缩放：15 万 -> 9 万（0.606），占额度比 45% 保持不变。
+DAILY_ADD_CAP = 90000.0
+
+# 单标的硬性持仓上限（元）= 20 万（资金闸门，不改动买卖触发逻辑）
+MAX_INVEST_PER_SYMBOL = 200000.0   # AUD41：当前仅在 intraday_add 的 cfg 缺省兜底中被引用，实际永不生效（单标的闸门由 capital_cap×max_position_pct 承担）；保留常量，勿依赖
+
+
+# ---------------------------------------------------------------------------
+# 3. 日志
+# ---------------------------------------------------------------------------
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ---- 日志轮转 + 文件锁（轻微2/3 修复）----
+LOG_MAX_BYTES = 10 * 1024 * 1024     # 单日志文件上限 10MB
+LOG_BACKUP_COUNT = 20                # AUD53(2026-10-13)：最多 20 个备份（.1 ~ .20）——
+                                     #   原为 5；日志按「每次启动轮换一份」，5 份在盘中频繁重启时
+                                     #   会把上午的日志挤掉（10-13 实盘暴露：最早只剩 12:05 那次启动，
+                                     #   上午 09:45-11:20 首仓窗口的诊断无法回溯）。纯留存份数，零行为变更。
+
+
+_WARNED_PATHS = set()  # 落盘失败告警去重（每个文件每次运行只提示一次）
+
+
+def _warn_write_fail(path, err):
+    """状态/台账落盘失败必须显式告警，不允许静默。
+
+    2026-09-24 现场暴露：save_state/save_m3 的调用方是 `except Exception: pass`（静默），
+    一旦 QMT 内嵌环境的 IO 沙箱拦截写入，状态会永远不落盘而毫无提示——重启后持仓与
+    加仓台账全部归零，进而重复开首仓。故在写入层统一兜底告警。
+    只 print、不写文件，因此不会再次触发写盘失败，也不存在递归。
+    """
+    if path in _WARNED_PATHS:
+        return
+    _WARNED_PATHS.add(path)
+    print("[%s] 【状态落盘失败】文件=%s 原因=%s —— 重启后该文件不会更新，"
+          "持仓/加仓台账可能归零并触发重复开首仓；请检查该目录写入权限"
+          "（本次运行内每个文件只提示一次）" % (now(), path, err))
+
+
+def _lock_and_write(path, write_fn, retry=2):
+    """外层包装：写入失败先告警再抛出，避免调用方的静默 except 吞掉现场。"""
+    try:
+        _lock_and_write_impl(path, write_fn, retry)
+    except Exception as _e:
+        _warn_write_fail(path, _e)
+        raise
+
+
+def _lock_and_write_impl(path, write_fn, retry=2):
+    """加 O_EXCL 锁的文件写入，用于状态/日志避免并发覆盖。
+    write_fn(fp) 在锁保持期间被调用，fp 为以二进制写入打开的锁内目标文件对象。
+    2026-09-22：内置Python所有策略在同一单线程串行执行，任一 sleep 阻塞都会拖住
+    其他策略（innerApi 开发注意事项第1条），锁等待从 10×0.1~0.2s 压缩到 2×0.02s；
+    拿不到锁仍执行原子写(tmp+replace)，不会损坏文件。"""
+    lock_path = path + ".lock"
+    locked = False
+    for _ in range(retry):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            locked = True
+            break
+        except FileExistsError:
+            time.sleep(0.02)
+        except Exception:
+            # 2026-09-24：QMT 内嵌 Python 的 IO 沙箱会拦截低层 os.open，抛出的并非
+            # FileExistsError（现场日志侧报 "Foribdden FileIO"）→ 原实现异常直接穿透，
+            # 整个写入被放弃。内置 Python 同线程串行执行，跳锁直接写同样安全，故放行。
+            break
+    try:
+        # 原子写入：写临时文件再 replace，避免中途进程崩溃残留半写状态
+        dir_ = os.path.dirname(path) or "."
+        tmp = ""
+        fd_tmp = None
+        try:
+            fd_tmp, tmp = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+        except Exception:
+            # 沙箱可能禁 mkstemp：降级为固定名临时文件
+            fd_tmp, tmp = None, path + ".tmp"
+        try:
+            _fp = os.fdopen(fd_tmp, "wb") if fd_tmp is not None else open(tmp, "wb")
+            with _fp:
+                write_fn(_fp)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        _done = False
+        try:
+            os.replace(tmp, path)              # 首选：原子替换
+            _done = True
+        except Exception:
+            pass
+        if not _done:
+            # 沙箱按「目标是否已存在」判定写入（2026-09-24 实测）：目标已存在时
+            # replace 同样被拒，故先把目标删掉再替换，让目标重新成为「新文件」。
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                os.replace(tmp, path)
+                _done = True
+            except Exception:
+                pass
+        if not _done:
+            # 最后兜底：读临时文件内容，删目标后以「新建」方式写出。
+            # 2026-09-24：tmp 虽由本进程刚创建，但沙箱对「已存在文件」连读都拦，
+            # open("rb") 会失败；改走 _read_file_bytes（ctypes 兜底）。
+            _blob, _ = _read_file_bytes(tmp)
+            if _blob is None:
+                _blob = b""
+            try:
+                with open(path, "wb") as _dst:
+                    _dst.write(_blob)
+            except Exception:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+                with open(path, "wb") as _dst:
+                    _dst.write(_blob)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    finally:
+        if locked:
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+
+
+def _rotate_log_if_needed(path):
+    """在锁内检查大小，超上限则轮转 .1/.2/.../.N（N=LOG_BACKUP_COUNT；
+    保持 QMT 环境仅用 os 模块，不依赖 logging.handlers）。"""
+    if not os.path.exists(path):
+        return
+    if os.path.getsize(path) < LOG_MAX_BYTES:
+        return
+    for i in range(LOG_BACKUP_COUNT - 1, 0, -1):
+        old = "%s.%d" % (path, i)
+        new = "%s.%d" % (path, i + 1)
+        if os.path.exists(old):
+            if os.path.exists(new):
+                try:
+                    os.unlink(new)
+                except OSError:
+                    pass
+            os.rename(old, new)
+    if os.path.exists(path):
+        os.rename(path, path + ".1")
+        _mirror_copy_trade_logs()   # AUD41：轮转发生时做一次完整镜像（含 .1~.5）
+
+
+_LOG_IN_NEST = 0.0        # 写盘占用标记：0=空闲；>0=进入写盘的时刻（time.time()）
+#   双重用途：
+#   ① 防止 log 递归（write 失败再调 log_err -> log 死循环）。
+#   ② 残留自愈（2026-09-24）：若上次写盘途中被 QMT 强杀而未走 finally，该标记会一直非 0，
+#      此后所有日志只 print 不落盘——现象是「QMT 界面日志完整、日志文件却几乎是空的」。
+#      故改为时间戳语义：超过 _LOG_NEST_TIMEOUT 秒即判定为残留，强制接管写盘。
+_LOG_NEST_TIMEOUT = 2.0
+_LOG_FAIL_WARNED = False  # 落盘失败只在本次运行内提示一次，避免刷屏
+_LOG_DEDUP_GAP = 300.0    # 重复消息节流间隔（秒）：同一条消息 300 秒内最多打一次（2026-10-08 新增，防每根 bar 刷屏）
+_LOG_DEDUP_TS = {}        # 消息指纹(消息文本本身) -> 上次输出时间戳（time.time()）
+_LOG_KEY_ALWAYS = (       # 关键交易事件白名单：包含以下子串的消息不受去重限制，每次必输出
+    # AUD36(2026-10-08 第四轮零预设独立审计)：补入「【卖出】」——原白名单有买入无卖出，
+    # 300 秒内两条文案相同的卖出日志第二条会被去重吞掉；卖出是铁律最关键的证据链，禁止被吞。
+    "【买入】", "【卖出】", "【首仓", "【止盈平仓】", "【涨停卖出】",
+    "【警告】", "已发委托", "已成", "已委托",)
+_LOG_WRITE_MODE = ""      # 日志实测可用的写模式："run-handle" / "append" / "overwrite" / ""
+_IO_CAPS = {}             # IO 能力探测缓存（见 _io_probe）
+_LOG_FP = None            # 本次运行的日志文件句柄（常开）
+_LOG_FP_HEALED = False   # AUD47(2026-10-13)：init 未走到 _open_log_run 时，log 主动补建句柄（每次运行最多一次）
+#   2026-09-24 现场实测（16:01:44 IO能力自检）确定沙箱规则：按「目标文件是否已存在」判定——
+#   新建文件可写（覆写=OK / 独占创建=OK / 文件替换=OK），但目标一旦已存在，
+#   追加与截断覆写一律被拒（报 Foribdden FileIO）。同一条日志里「降级覆写也被拒」
+#   而探测的「覆写=OK」通过，差别就在于探测写的是新建文件、日志写的是既存文件。
+#   故日志通道改为：启动时先把上一次的日志改名备份（让同名文件不存在）→ open(w) 新建
+#   → 持有句柄，此后写入只走这个已打开的句柄，不再经过 open 检查。
+
+
+def _open_log_run():
+    """启动时为本次运行准备日志文件，返回常开句柄（失败返回 None）。
+    P3-4 修复(2026-10-01)：启动备份由「只保留 1 份 .1」改为按 .5→.1 依次后移
+    （复用 _rotate_log_if_needed 的移位逻辑）——高频重启场景下旧实现每次启动都
+    覆盖上一份 .1，历史日志只剩当前运行 + 上一轮，故障回溯窗口被压缩。"""
+    global _LOG_FP
+    if _LOG_FP is not None:
+        return _LOG_FP
+    try:
+        if os.path.exists(TRADE_LOG):
+            # 先把历史备份依次后移（.4->.5, .3->.4, ...），再让本次日志成为 .1
+            for i in range(LOG_BACKUP_COUNT - 1, 0, -1):
+                _old = "%s.%d" % (TRADE_LOG, i)
+                _new = "%s.%d" % (TRADE_LOG, i + 1)
+                if os.path.exists(_old):
+                    if os.path.exists(_new):
+                        try:
+                            os.remove(_new)
+                        except OSError:
+                            pass
+                    try:
+                        os.rename(_old, _new)
+                    except OSError:
+                        pass
+            _bak = TRADE_LOG + ".1"
+            os.rename(TRADE_LOG, _bak)      # 关键：让同名文件「不存在」
+    except Exception:
+        pass
+    try:
+        _LOG_FP = open(TRADE_LOG, "w", encoding="utf-8")
+    except Exception:
+        _LOG_FP = None
+    return _LOG_FP
+
+
+def _close_log_run():
+    """停止时关闭句柄并落盘（句柄不关可能丢缓冲区）。"""
+    global _LOG_FP
+    if _LOG_FP is None:
+        return
+    try:
+        _LOG_FP.flush()
+    except Exception:
+        pass
+    try:
+        _LOG_FP.close()
+    except Exception:
+        pass
+    _LOG_FP = None
+
+
+def _io_probe():
+    """探测本环境允许的文件写能力，只做一次并缓存。
+
+    2026-09-24 现场暴露：QMT 内嵌 Python 的 IO 沙箱是按「操作类型」放行/拦截的——
+    open(...,"w") 通过（持久化自检报「目录可写」），但追加写与低层 os.open 可能被拦
+    （报 "Foribdden FileIO"）。此处逐项实测，结果直接打进启动日志，一次定位沙箱规则。
+    """
+    if _IO_CAPS:
+        return _IO_CAPS
+    _caps = {"overwrite": False, "append": False, "excl": False, "replace": False,
+             "overwrite_ex": False, "append_ex": False, "replace_ex": False}
+    _p = os.path.join(_BASE_DIR, ".wb_io_probe")
+    try:
+        with open(_p, "w", encoding="utf-8") as _f:
+            _f.write("x")
+        _caps["overwrite"] = True
+    except Exception:
+        pass
+    try:
+        with open(_p, "a", encoding="utf-8") as _f:
+            _f.write("y")
+        _caps["append"] = True
+    except Exception:
+        pass
+    try:
+        _fd = os.open(_p + ".lk", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(_fd)
+        _caps["excl"] = True
+    except Exception:
+        pass
+    try:
+        if _caps["excl"]:
+            _from = _p + ".lk"
+        else:
+            with open(_p + ".a", "w", encoding="utf-8") as _f:
+                _f.write("1")
+            _from = _p + ".a"
+        os.replace(_from, _p + ".mv")
+        _caps["replace"] = True
+    except Exception:
+        pass
+    # —— 已存在文件维度（2026-09-24 现场关键）：新建可写 ≠ 已存在可写 ——
+    # 日志与状态文件的目标都是「已存在文件」，只测新建会得到误导性的 OK。
+    _pe = _p + ".ex"
+    try:
+        with open(_pe, "w", encoding="utf-8") as _f:
+            _f.write("z")
+    except Exception:
+        pass
+    # 读已存在文件（2026-09-24 20:56 新增）：框架日志探测在策略进程内失败，
+    # 怀疑沙箱对「已存在文件」连读都拦（与写同规则）。此项实测直接给答案。
+    try:
+        with open(_pe, "rb") as _f:
+            _f.read(1)
+        _caps["read_ex"] = True
+    except Exception:
+        pass
+    # 低层 fd 读取（2026-09-24 21:07 新增）：open 读已存在被拒时，os.open/os.read
+    # 是状态回读的唯一兜底通道（沙箱放行全部 os.* 系操作）。此项实测给答案。
+    try:
+        _fd_r = os.open(_pe, os.O_RDONLY)
+        os.read(_fd_r, 1)
+        os.close(_fd_r)
+        _caps["read_ex_fd"] = True
+    except Exception:
+        pass
+    # —— 读通道第三轮突围（2026-09-24 21:23 新增）：21:07 日志实证 os.open 也被拦，
+    # 且 Foribdden FileIO 是 Python 层自造异常 → 判定沙箱是对 builtins.open/os.open
+    # 打的补丁。绕开 Python 层的通道实测：ctypes Win32 / 子进程 / rename 洗名。
+    # 注意必须用新建的独立探测文件（_pe 在下方 replace_ex 会被移走）。
+    _pr = _p + ".rd"
+    try:
+        with open(_pr, "w", encoding="utf-8") as _f:
+            _f.write("rd")
+    except Exception:
+        pass
+    if os.path.exists(_pr):
+        try:
+            _b, _ = _win32_read_bytes(_pr, 4096)
+            _caps["read_ctypes"] = (_b is not None)
+        except Exception:
+            pass
+        try:
+            _b, _ = _subproc_read_bytes(_pr)
+            _caps["read_sub"] = (_b is not None)
+        except Exception:
+            pass
+        try:
+            _prl = _pr + ".rl"
+            os.rename(_pr, _prl)                 # os.rename 已实证放行（日志备份走它）
+            try:
+                with open(_prl, "rb") as _f:
+                    _f.read(1)
+                _caps["read_launder"] = True
+            finally:
+                try:
+                    os.rename(_prl, _pr)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            os.listdir(_BASE_DIR)
+            _caps["listdir"] = True
+        except Exception:
+            pass
+    try:
+        with open(_pe, "a", encoding="utf-8") as _f:
+            _f.write("z")
+        _caps["append_ex"] = True
+    except Exception:
+        pass
+    try:
+        with open(_pe, "w", encoding="utf-8") as _f:
+            _f.write("z")
+        _caps["overwrite_ex"] = True
+    except Exception:
+        pass
+    try:
+        with open(_p + ".dst", "w", encoding="utf-8") as _f:
+            _f.write("d")
+        os.replace(_pe, _p + ".dst")        # 目标已存在
+        _caps["replace_ex"] = True
+    except Exception:
+        pass
+    for _x in (_p, _p + ".lk", _p + ".a", _p + ".mv", _pe, _p + ".dst",
+               _pr, _pr + ".rl"):
+        try:
+            os.remove(_x)
+        except Exception:
+            pass
+    _IO_CAPS.update(_caps)
+    return _IO_CAPS
+
+
+# ---- 运行模式确定性判定（2026-09-24：改读框架自身的日志）--------------------
+# 背景：大QMT 原生框架的 ContextInfo **不提供** trade_mode（16:27/17:22 实测：
+#   候选字段名全空、dir(C) 里也没有任何含 mode 的可读字段），此前只能靠「启动日志
+#   上方有没有出现 [trade]start simulation mode」间接推断，用户得手动比对。
+# 现状：框架启动模型时会把那一行写进自己的日志文件——
+#   <QMT_ROOT>/userdata/log/XtClient_FormulaOutput_YYYYMMDD.log
+#   形如：17:23:14,075 [INFO] ... output = [trade]start trading mode
+# 时序上该行打印在 subscribe/init **之前**（17:23:14 日志可证），因此 init 执行时
+# 已经落盘，读文件末条即可得到确定性结论。读不到时静默降级，不影响主流程。
+_QMT_MODE_LOG = ""        # 命中的框架日志绝对路径（供日志展示）
+# 运行模式标记的陈旧性阈值（秒）。框架日志 [trade]start <mode> mode 行的时间戳
+# 距今超过此值即视为「非本次运行」，不把它当作结论返回。
+# 2026-09-24 21:58 第一版用 120s：切到实盘后 init 读到 217s 前的 simulation 行被拒（好）；
+# 2026-09-24 22:04 反向事故：当前轮 simulation 行未刷盘，读到上轮 117s 前的 trading 行，
+#   117<=120 被判新鲜 → 实盘报成 trading。故收紧到 60s：当前轮的模式行必然在数十秒内，
+#   超过 60s 基本可断定是上轮残留。
+_MODE_STALE_SEC = 60
+# 探测重试次数与间隔：框架由独立线程异步打印 [trade]start <mode> mode，
+# 2026-09-24 22:08/22:13 现场实测该行比 init 起始晚 5.5~10s 才落盘，且与策略输出不共享
+# 刷盘时机（策略的 print 不会触发该行落盘）。init 里不等太久（5 次 × 1s ≈ 4s），
+# 未命中则置 _trade_mode_pending，由首次 handlebar 再补测一次（那时行早已落盘）。
+_MODE_PROBE_RETRY = 5
+_MODE_PROBE_INTERVAL = 1.0
+# init 未探测到模式时置 True，handlebar 首次进入时补测后清 False。
+_trade_mode_pending = False
+_MODE_RECHECK_LAST = 0.0    # AUD33(2026-10-08)：运行模式补测未命中的 10 分钟节流提示时间戳
+
+
+def _qmt_mode_log_candidates():
+    """推导 QMT 框架日志的候选路径（逐个尝试，不保证存在）。"""
+    _out = []
+    try:
+        _day = datetime.now().strftime("%Y%m%d")
+        _names = ("XtClient_FormulaOutput_%s.log" % _day,
+                  "XtClient_Formula_%s.log" % _day)
+        _roots = []
+        try:
+            _cwd = os.getcwd()          # 通常为 <QMT_ROOT>\\bin.x64
+        except Exception:
+            _cwd = ""
+        for _b in (_cwd, os.path.dirname(_cwd)):
+            if _b and _b not in _roots:
+                _roots.append(_b)
+        # 本机 QMT 安装根的兜底（与 GF_BASE_DIR 无关，仅用于读框架日志）
+        for _r in ("C:\\广发证券QMT量化交易系统 - 交易端 - 2",
+                   "C:\\广发证券QMT量化交易系统 - 交易端"):
+            if _r not in _roots:
+                _roots.append(_r)
+        for _r in _roots:
+            for _n in _names:
+                _out.append(os.path.join(_r, "userdata", "log", _n))
+    except Exception:
+        pass
+    return _out
+
+
+def _probe_trade_mode(retries=_MODE_PROBE_RETRY):
+    """读框架日志末条 [trade]start X mode，返回 (mode, path, age_sec, note)。
+
+    mode ∈ {'trading','simulation',''}；'' 表示未能确定（沙箱禁读/路径不同/日志轮空/
+    仅命中陈旧标记）。只读文件尾部 512KB，避免大文件全量载入；任何异常都静默降级。
+
+    retries: 探测重试次数（含首次）。init 用默认 _MODE_PROBE_RETRY（带等待刷盘）；
+             handlebar 补测传 1（不等，因为行早已落盘）。
+
+    2026-09-24 20:56：失败不再完全静默——把每个候选的失败原因收进 note。
+    2026-09-24 21:23：改走 _read_file_tail 四级读链。
+    2026-09-24 21:58：增加陈旧性闸门与重试——命中的标记行若距今 >_MODE_STALE_SEC 秒，
+        视为上一轮运行残留，不返回该 mode（返回空让调用方走「未判定/待首根 bar 补测」分支），
+        避免实盘模式被误报为模拟。重试 retries 次，每次间隔
+        _MODE_PROBE_INTERVAL 秒，给框架日志刷盘留窗口。
+    2026-09-24 22:15：增加 retries 参数——handlebar 补测只需 1 次（行已落盘），
+        不必在每根 bar 入口阻塞数秒。
+    """
+    global _QMT_MODE_LOG
+    _errs = []
+    for _p in _qmt_mode_log_candidates():
+        _best = None          # (mode, age, line_ts) 本次探测到的最新鲜命中
+        for _attempt in range(retries):
+            try:
+                if not os.path.exists(_p):
+                    _errs.append("%s:不存在" % os.path.basename(_p))
+                    break
+                _tail, _err = _read_file_tail(_p)
+                if _tail is None:
+                    _errs.append("%s:读被拒(%s)" % (os.path.basename(_p), _err))
+                    break
+                _tail = _tail.decode("utf-8", "replace")
+                _mode = ""
+                _line_ts = ""
+                # 只匹配框架原生 mode 行：格式为 `..., output = [trade]start <mode> mode`。
+                # 不能只搜 `[trade]start ... mode`——策略自己的「运行模式自检」日志里也含
+                # 该文本（用于提示用户看首行），会被误判为框架 mode 行，且时间戳是当前的，
+                # 陈旧性闸门拦不住，导致 simulation 被误报成 trading（2026-09-24 22:20 事故）。
+                # 用 `output = [trade]start` 锚定 output 字段直接以 mode 行开头，排除策略日志。
+                for _ln in reversed(_tail.splitlines()):
+                    if "output = [trade]start trading mode" in _ln:
+                        _mode = "trading"
+                    elif "output = [trade]start simulation mode" in _ln:
+                        _mode = "simulation"
+                    else:
+                        continue
+                    _line_ts = _ln[:19]
+                    break
+                if not _mode:
+                    _errs.append("%s:无模式标记" % os.path.basename(_p))
+                    break
+                _age = -1.0
+                try:
+                    _ts = datetime.strptime(_line_ts, "%Y-%m-%d %H:%M:%S")
+                    _age = (datetime.now() - _ts).total_seconds()
+                except Exception:
+                    # 时间戳解析失败：不回退到文件 mtime。该日志文件持续写入，
+                    # mtime 恒为「刚刚」，会让任何陈旧标记都被判新鲜（2026-09-24
+                    # 22:04 反向事故根因之一）。解析失败直接走未知分支更安全。
+                    _age = -1.0
+                # 记录最新鲜的命中；若已足够新鲜则立即返回。
+                if _best is None or _age < _best[1]:
+                    _best = (_mode, _age, _line_ts)
+                if _age >= 0 and _age <= _MODE_STALE_SEC:
+                    _QMT_MODE_LOG = _p
+                    return _mode, _p, _age, ""
+            except Exception as _e:
+                _errs.append("%s:%s" % (os.path.basename(_p), _e))
+                break
+            # 非末次重试：等待框架日志刷盘
+            if _attempt < retries - 1:
+                time.sleep(_MODE_PROBE_INTERVAL)
+        # 所有重试结束后，若最新鲜命中仍陈旧 → 不返回该 mode，走未知分支。
+        if _best is not None:
+            _mode, _age, _line_ts = _best
+            if _age >= 0 and _age > _MODE_STALE_SEC:
+                _QMT_MODE_LOG = _p
+                _note = "仅命中%.0f秒前的陈旧标记(%s),已忽略,请以界面首行" \
+                        "「[trade]start ... mode」为准" % (_age, _mode)
+                return "", _p, _age, _note
+            # _age < 0（时间戳未知）：无法判定新旧，保守返回未知。
+            if _age < 0:
+                _QMT_MODE_LOG = _p
+                return "", _p, _age, "时间戳未知"
+    return "", "", -1.0, (";".join(_errs[:4]) if _errs else "")
+
+
+def _mode_pending_recheck():
+    """运行模式延迟补测：init 探测不到时由首次 handlebar 调用（此时框架那行已落盘）。
+
+    init 里框架 [trade]start <mode> mode 行由独立线程异步刷盘（实测晚 5.5~10s），
+    init 探测常错过 → 置 _trade_mode_pending；handlebar 首次进入时补测一次即可命中。
+    命中后清 pending 并记日志；未命中保持 pending，下根 bar 再试。
+    """
+    global _trade_mode_pending
+    if not _trade_mode_pending:
+        return
+    _tm, _tp, _ta, _tn = _probe_trade_mode(retries=1)
+    if _tm == "trading":
+        log("运行模式补测 | trade_mode=trading（实盘）—— passorder 将发往券商。")
+        _trade_mode_pending = False
+    elif _tm in ("simulation", "backtest"):
+        log("运行模式补测 | trade_mode=%s（%s）—— passorder 不会发往券商，"
+            "委托与持仓永不落账，策略只会空转「买入→180s结算→冷却」循环。"
+            "请在「策略交易」界面把运行模式栏切到「实盘」并重启模型。"
+            % (_tm, "模拟" if _tm == "simulation" else "回测"))
+        _trade_mode_pending = False
+    # else: 仍未命中新鲜行（框架那行还没刷盘 / 只有陈旧行），保持 pending，下根 bar 再试
+    else:
+        _now_r = time.time()
+        if _now_r - _MODE_RECHECK_LAST >= 600.0:
+            _MODE_RECHECK_LAST = _now_r
+            log("【运行模式补测-未命中】init 仍未探测到新鲜 trade_mode 行，保持 pending 继续等待；"
+                "持续超过10分钟请检查 QMT 策略交易界面运行模式栏是否已就绪")
+
+
+def _session_now():
+    """返回 (是否连续竞价时段, HH:MM:SS, 时段名)。
+
+    与 _handlebar_impl 顶部门控同一口径（09:30~11:29:59 / 13:00~14:59:59，AUD20/AUD24 门控边界，周末与其余时段跳过）。
+    用于在启动日志里明确告知「本次运行会不会真的下单」，避免在收盘后反复重启排查。
+    """
+    try:
+        _now = datetime.now()
+    except Exception:
+        return True, "", ""
+    _hms = _now.hour * 10000 + _now.minute * 100 + _now.second
+    _hhmmss = _now.strftime("%H:%M:%S")
+    # AUD37(2026-10-08 第五轮零预设独立审计)：周末判定与 is_trade_day 调休口径对齐——
+    # 原按 weekday>=5 恒报「周末」，调休上班的周六被误标为周末；仅影响启动提示文字，不影响交易判断。
+    try:
+        _td_sess, _ = is_trade_day()
+    except Exception:
+        _td_sess = False
+    if not _td_sess:
+        if _now.weekday() >= 5:
+            return False, _hhmmss, "周末"
+        return False, _hhmmss, "非交易日(节假日/调休)"
+    if 93000 <= _hms <= 112959:
+        return True, _hhmmss, "上午盘"
+    if 130000 <= _hms <= 145959:
+        return True, _hhmmss, "下午盘"
+    if _hms < 93000:
+        return False, _hhmmss, "盘前"
+    if _hms < 130000:
+        return False, _hhmmss, "午间休市"
+    return False, _hhmmss, "盘后"
+
+
+# ---- 存活打点（心跳日志，2026-09-25）----------------------------------------
+# 输出方案（选定）：状态变化时输出 + 交易时段周期打点。
+#   · 交易日连续竞价时段（09:30~11:29:59 / 13:00~14:59:59，与交易门一致）：每 _HB_INTERVAL 秒打点一次；
+#   · 交易日其余时段（盘前/午休/盘后）与非交易日（周末/法定节假日/调休）：
+#     完全静默，仅当时段状态发生切换时输出一行（如 盘前->上午盘、上午盘->午间休市）；
+#   · 心跳检测本身每根 bar 都执行（更新 _HB_LAST_BEAT_TS，供外部看门狗判活），
+#     仅日志输出受门控，不影响任何交易逻辑。
+_HB_INTERVAL = 300.0        # 交易时段内打点间隔（秒），可按需调整
+_HB_LAST_BEAT_TS = 0.0      # 最近一次心跳检测时刻（无论是否输出日志）
+_HB_LAST_LOG_TS = 0.0       # 最近一次打点输出时刻（含状态变化行）
+_HB_LAST_STATE = ""         # 上一次所处的时段状态（状态变化才输出）
+
+
+def _heartbeat_tick():
+    """存活打点：每根 bar 调用一次。检测始终执行，日志输出按状态门控。
+
+    状态口径：非交易日（is_trade_day 判定，覆盖周末+法定节假日+调休）归为
+    「非交易日」单一状态；交易日按时刻分为 盘前/上午盘/午间休市/下午盘/盘后
+    （不直接用 _session_now，因其对调休周六日恒报「周末」，与交易日门控口径不一致）。
+    """
+    global _HB_LAST_BEAT_TS, _HB_LAST_LOG_TS, _HB_LAST_STATE
+    try:
+        _now = time.time()
+        _dt = datetime.now()
+    except Exception:
+        return
+    _HB_LAST_BEAT_TS = _now
+    _hhmmss = _dt.strftime("%H:%M:%S")
+    _td, _src = is_trade_day()
+    if not _td:
+        _state, _in_sess = "非交易日", False
+    else:
+        _hms = _dt.hour * 10000 + _dt.minute * 100 + _dt.second
+        if 93000 <= _hms <= 112959:
+            _state, _in_sess = "上午盘", True
+        elif 130000 <= _hms <= 145959:
+            _state, _in_sess = "下午盘", True
+        elif _hms < 93000:
+            _state, _in_sess = "盘前", False
+        elif _hms < 130000:
+            _state, _in_sess = "午间休市", False
+        else:
+            _state, _in_sess = "盘后", False
+    if _state != _HB_LAST_STATE:
+        log("存活打点 | 状态 %s -> %s | %s | %s"
+            % (_HB_LAST_STATE or "启动", _state, _hhmmss,
+               ("交易时段内每%.0f秒打点一次" % _HB_INTERVAL) if _in_sess
+               else "静默中，仅状态变化时输出"))
+        _HB_LAST_STATE = _state
+        _HB_LAST_LOG_TS = _now
+        return
+    if _in_sess and (_now - _HB_LAST_LOG_TS) >= _HB_INTERVAL:
+        log("存活打点 | 心跳正常 | %s | 距上次输出%.0f秒" % (_hhmmss, _now - _HB_LAST_LOG_TS))
+        _HB_LAST_LOG_TS = _now
+
+
+def _write_log_line(line):
+    """写一行日志到 TRADE_LOG，返回 (ok, err)。
+
+    通道优先级：
+      ① 本次运行的常开句柄（由 _open_log_run() 建立）——沙箱禁写已存在文件时唯一可用；
+      ② append（未受限制的环境下开销最小）；
+      ③ 降级为「读旧内容 + 整体覆写」。
+    实测成功的模式缓存在 _LOG_WRITE_MODE，避免每行日志都付出一次试错代价。
+    """
+    global _LOG_WRITE_MODE, _LOG_FP
+    _first = ""
+    if _LOG_FP is not None:
+        try:
+            _LOG_FP.write(line + "\n")
+            _LOG_FP.flush()
+            _LOG_WRITE_MODE = "run-handle"
+            return True, ""
+        except Exception as _e:
+            _first = "运行句柄写入失败(%s)" % _e
+            try:
+                _LOG_FP.close()
+            except Exception:
+                pass
+            _LOG_FP = None
+    if _LOG_WRITE_MODE != "overwrite":
+        try:
+            with open(TRADE_LOG, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            _LOG_WRITE_MODE = "append"
+            return True, ""
+        except Exception as _e:
+            _first = "%s追加被拒(%s)" % ((_first + "；") if _first else "", _e)
+    try:
+        _old = ""
+        try:
+            if os.path.exists(TRADE_LOG) and os.path.getsize(TRADE_LOG) <= LOG_MAX_BYTES:
+                # 2026-09-24：沙箱拦 open() 读已存在文件，改走 _read_file_bytes
+                # （ctypes 兜底），否则降级覆写会把日志历史整个截断丢失。
+                _blob, _ = _read_file_bytes(TRADE_LOG)
+                if _blob:
+                    _old = _blob.decode("utf-8", errors="ignore")
+        except Exception:
+            _old = ""
+        if len(_old) > 262144:      # 降级模式每次全量重写，只留尾部 256KB 防越滚越慢
+            _old = _old[-262144:]
+        with open(TRADE_LOG, "w", encoding="utf-8") as f:
+            f.write(_old + line + "\n")
+        _LOG_WRITE_MODE = "overwrite"
+        return True, ""
+    except Exception as _e2:
+        return False, "%s；降级覆写被拒(%s)" % (_first, _e2)
+
+
+def log(msg):
+    global _LOG_IN_NEST, _LOG_FAIL_WARNED
+    # 2026-10-08 防刷屏：同一条消息 _LOG_DEDUP_GAP(300) 秒内只输出一次（仅跳过打印/写盘，不改变任何交易判断或下单）——AUD68 修正原注释"60s"与常量 300 不符
+    # 关键交易事件（白名单 _LOG_KEY_ALWAYS）不受限制，确保成交/卖出/警告每次可见。
+    _dedup = True
+    for _kw in _LOG_KEY_ALWAYS:
+        if _kw in msg:
+            _dedup = False
+            break
+    if _dedup:
+        _dt2 = time.time()
+        if _dt2 - _LOG_DEDUP_TS.get(msg, 0.0) < _LOG_DEDUP_GAP:
+            return
+        _LOG_DEDUP_TS[msg] = _dt2
+    line = "[%s] %s" % (now(), msg)
+    print(line)
+    _t = time.time()
+    if _LOG_IN_NEST and (_t - _LOG_IN_NEST) < _LOG_NEST_TIMEOUT:
+        return
+    try:
+        _LOG_IN_NEST = _t
+        # 锁内执行：轮转 + 追加写入，避免多标的多进程并发写交叉或覆盖
+        # 2026-09-22：锁等待压缩(2×0.02s)，防内置Python单线程阻塞（见 _lock_and_write 注释）
+        lock_path = TRADE_LOG + ".lock"
+        locked = False
+        for _ in range(2):
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                locked = True
+                break
+            except FileExistsError:
+                time.sleep(0.02)
+            except Exception:
+                break       # 沙箱禁低层 os.open：跳锁继续写，绝不让锁把日志带停
+        try:
+            _rotate_log_if_needed(TRADE_LOG)
+            _ok, _err = _write_log_line(line)
+            if _ok:
+                _mirror_trade_logs_throttled()   # AUD41：镜像同步改为 60s 节流（原每行日志复制 6 个文件，单线程下 I/O 放大）
+            if not _ok and not _LOG_FAIL_WARNED:
+                _LOG_FAIL_WARNED = True
+                print("[%s] 【日志落盘失败】文件=%s 原因=%s"
+                      "（本次运行内只提示一次；仅影响本地日志文件，不影响交易逻辑）"
+                      % (now(), TRADE_LOG, _err))
+        finally:
+            if locked:
+                try:
+                    os.unlink(lock_path)
+                except OSError:
+                    pass
+    except Exception as _e:
+        # 日志失败不再抛异常/再递归，避免磁盘写满时影响主交易循环。
+        # 2026-09-24：不再静默——首次失败显式 print 一行（只 print、不写文件，不会递归）。
+        # 否则「界面日志完整、文件永远为空」这种失效无声无息，排查时极易误判为没跑起来。
+        if not _LOG_FAIL_WARNED:
+            _LOG_FAIL_WARNED = True
+            print("[%s] 【日志落盘失败】文件=%s 原因=%s"
+                  "（本次运行内只提示一次；仅影响本地日志文件，不影响交易逻辑）"
+                  % (now(), TRADE_LOG, _e))
+    finally:
+        _LOG_IN_NEST = 0.0
+
+
+def log_err(msg):
+    """记录异常并附完整堆栈，便于在 QMT 中定位『立即停止』类问题。"""
+    log(msg + "\n" + traceback.format_exc())
+
+
+def _hist_vals_from_ex(C, code, field, n, div, use_fill):
+    """get_market_data_ex 取单字段序列；任何异常原样抛出，由调用方记录形态标记。"""
+    if use_fill:
+        data = C.get_market_data_ex([field], [code], period="1d", count=n,
+                                    dividend_type=div, fill_data=True)
+    else:
+        data = C.get_market_data_ex([field], [code], period="1d", count=n,
+                                    dividend_type=div)
+    df = data.get(code) if isinstance(data, dict) else None
+    if df is None or len(df) == 0:
+        return []
+    col = df[field] if field in list(getattr(df, "columns", [])) else None
+    if col is None:
+        return []
+    vals = []
+    for x in list(col):
+        try:
+            fx = float(x)
+        except (TypeError, ValueError):
+            return []
+        if fx != fx:            # NaN：序列不完整，本形态作废
+            return []
+        vals.append(fx)
+    return vals
+
+
+def _hist_vals_old(C, code, field, n, dividend_type):
+    """老接口 get_history_data；dividend_type 为 int(3=等比前复权)，None 表示用缺省签名。
+    AUD34(2026-10-08 第二轮零预设审计)已对照迅投官方文档核对 int 枚举：0=不复权/1=向前复权/
+    2=向后复权/3=等比向前复权/4=等比向后复权——此处 3=等比前复权 注释正确，无需改动。"""
+    if dividend_type is None:
+        d = C.get_history_data(n, "1d", field)
+    else:
+        d = C.get_history_data(n, "1d", field, dividend_type)
+    if d is None:
+        return []
+    if isinstance(d, dict):
+        vals = d.get(code)
+        if vals is None:
+            # 部分版本按 '002142' 或字段名做键，兜底取第一个可用序列
+            for _k, _v in d.items():
+                if isinstance(_v, (list, tuple)) and len(_v) > 1:
+                    vals = _v
+                    break
+    else:
+        vals = d
+    out = []
+    for x in list(vals or []):
+        try:
+            out.append(float(x))
+        except (TypeError, ValueError):
+            return []
+    return out
+
+
+def _get_hist(C, code, field, n=120):
+    """稳健获取日线历史数据（2026-09-24 增强：多形态探测 + 失败原因可诊断）。
+
+    P2-2 修复(2026-10-01)：形态按「复权口径」分三档——前复权(front) > 口径未知
+    (unknown) > 不复权(none)。此前实现只看「长度最大」（`len(vals) > len(best)`），
+    不看复权口径：若前复权形态返回空/较短而不复权形态足量，指标会静默落到
+    **不复权序列**上，除权除息日附近 KDJ/WR/MA20/偏离度全部失真且无任何日志线索。
+    现在只在同口径内比较长度；落到 unknown/none 兜底时输出醒目日志。
+      front : (1) get_market_data_ex(front_ratio, fill_data=True)
+              (2) get_market_data_ex(front_ratio)
+              (4) get_history_data(n, '1d', field, 3)   —— 老接口，int 3=等比前复权
+      unknown: (5) get_history_data(n, '1d', field)      —— 老接口缺省，口径未知
+      none  : (3) get_market_data_ex(none)               —— 不复权，仅最后兜底
+    任一形态拿到足量(n根)数据即提前结束。返回 (vals, src, err)。
+    内置Python单线程：不做重试等待，失败即返回空（调用方跳过本根bar）。
+    """
+    errs = []
+    best, best_src = [], "-"
+    best_cls = None
+    by_cls = {}     # cls -> (vals, src)
+    try:
+        forms = (
+            ("ex+f/ratio", "front", lambda: _hist_vals_from_ex(C, code, field, n, "front_ratio", True)),
+            ("ex/ratio", "front", lambda: _hist_vals_from_ex(C, code, field, n, "front_ratio", False)),
+            ("ex/none", "none", lambda: _hist_vals_from_ex(C, code, field, n, "none", False)),
+            ("old/int3", "front", lambda: _hist_vals_old(C, code, field, n, 3)),
+            ("old/dflt", "unknown", lambda: _hist_vals_old(C, code, field, n, None)),
+        )
+        for tag, cls, fn in forms:
+            try:
+                vals = fn()
+            except Exception as e:
+                errs.append("%s=%s" % (tag, e.__class__.__name__))
+                continue
+            if vals and len(vals) > len(by_cls.get(cls, ([], ""))[0]):
+                by_cls[cls] = (vals, tag)
+            if by_cls.get("front", ([], ""))[0] and len(by_cls["front"][0]) >= n:
+                break   # 前复权已足量，无需再探测低优先级口径
+        for cls in ("front", "unknown", "none"):
+            if cls in by_cls and by_cls[cls][0]:
+                best, best_src = by_cls[cls]
+                best_cls = cls
+                break
+        if best and best_cls in ("unknown", "none"):
+            log("[%s] 【复权口径告警】历史取数落到 %s 口径形态(%s)——"
+                "前复权形态均不可用；除权除息日附近指标可能失真，请检查客户端数据下载"
+                % (code, "口径未知" if best_cls == "unknown" else "不复权", best_src))
+    except Exception as e:
+        errs.append("probe=%s" % e.__class__.__name__)
+    if best:
+        return best, best_src, None
+    return [], "-", ("; ".join(errs) if errs else "各形态均返回空")
+
+
+# ---------------------------------------------------------------------------
+# 4. 指标计算（与 indicators.py / strategy_core.py 单一真源口径一致）
+# ---------------------------------------------------------------------------
+def calc_kdj_arr(closes, highs, lows, n=9, k_smooth=3, d_smooth=3):
+    size = len(closes)
+    k_list, d_list, j_list = [None] * size, [None] * size, [None] * size
+    prev_k, prev_d = 50.0, 50.0
+    for i in range(size):
+        if i < n - 1:
+            k_list[i], d_list[i], j_list[i] = prev_k, prev_d, 3 * prev_k - 2 * prev_d
+            continue
+        hh = max(highs[i - n + 1:i + 1])
+        ll = min(lows[i - n + 1:i + 1])
+        rsv = 50.0 if hh == ll else (closes[i] - ll) / (hh - ll) * 100.0
+        k = (k_smooth - 1.0) / k_smooth * prev_k + (1.0 / k_smooth) * rsv
+        d = (d_smooth - 1.0) / d_smooth * prev_d + (1.0 / d_smooth) * k
+        k_list[i], d_list[i], j_list[i] = k, d, 3 * k - 2 * d
+        prev_k, prev_d = k, d
+    return k_list, d_list, j_list
+
+
+def calc_wr_arr(closes, highs, lows, n=14):
+    # AUD-R14(2026-10-04)：本函数返回 0~100 正轴，值越大表示价格越接近区间低位（超卖）；参与底背离检测时需取负（wr_std = -w）；维护时切勿将方向写反。
+    size = len(closes)
+    wr_list = [None] * size
+    for i in range(size):
+        if i < n - 1:
+            continue
+        hh = max(highs[i - n + 1:i + 1])
+        ll = min(lows[i - n + 1:i + 1])
+        wr_list[i] = 0.0 if hh == ll else (hh - closes[i]) / (hh - ll) * 100.0
+    return wr_list
+
+
+def detect_bottom_divergence(closes, k_list, d_list, wr_list, n=14, current_only=False):
+    """底背离检测（与 indicators.py 单一真源口径一致, M6）。
+
+    条件：股价创 N 日新低，且 KDJ 的 K、D 与 Williams %R 三者均未同步创 N 日新低。
+      · 股价新低 : close[i] < min(close[i-n : i])
+      · 指标未新低 : ind[i] >= min(ind[i-n : i])
+    参数 current_only: True=仅返回【最后一根】是否为底背离日(bool)；False=返回全部信号日(list[int])。
+    返回：bool（current_only=True）或 list[int]（current_only=False）。
+    """
+    size = len(closes)
+    results = []
+
+    def _compare(arr):
+        prev = [v for v in arr[i - n:i] if v is not None]
+        if not prev:
+            return None, None, None
+        cur = arr[i]
+        lo = min(prev)
+        if cur is None:
+            return None, lo, None
+        return cur, lo, (cur >= lo - 1e-9)
+
+    for i in range(size):
+        if i < n:
+            continue
+        price_prev = closes[i - n:i]
+        if not (closes[i] < min(price_prev)):
+            continue
+        k_cur, k_min, k_ok = _compare(k_list)
+        d_cur, d_min, d_ok = _compare(d_list)
+        w_cur, w_min, w_ok = _compare(wr_list)
+        if None in (k_cur, d_cur, w_cur, k_min, d_min, w_min):
+            continue
+        div = bool(k_ok and d_ok and w_ok)
+        if div:
+            results.append(i)
+    if current_only:
+        return bool(results) and results[-1] == size - 1
+    return results
+
+
+# ---------------------------------------------------------------------------
+# 5. 信号判定（与 strategy_core.py 单一真源一致）
+# ---------------------------------------------------------------------------
+def check_volume_confirm(volumes, short_n=3, long_n=20, ratio=1.2):
+    size = len(volumes)
+    if size < long_n:
+        return True, "数据不足(跳过确认)"
+    short_avg = sum(volumes[-short_n:]) / short_n
+    long_avg = sum(volumes[-long_n:]) / long_n
+    if long_avg <= 0:
+        return True, "长期均量异常(跳过确认)"
+    if short_avg >= long_avg * ratio:
+        return True, "放量确认"
+    return False, "缩量过滤"
+
+
+def _vol_ratio_txt(volumes, params):
+    """AUD42-3(2026-10-09)：量能门诊断文本（仅日志用，不参与任何买卖判断）。
+
+    返回形如「3日均量=123456/20日均量=100000=1.23倍(门槛1.2)」；数据不足或口径异常时
+    如实说明「量能门未参与」，便于事后统计量能门到底拦了什么、放了什么。
+    """
+    try:
+        sn = int(params.get("volume_short_n", 3))
+        ln = int(params.get("volume_long_n", 20))
+        rt = float(params.get("volume_ratio", 1.2))
+        if not volumes or len(volumes) < ln:
+            return "数据不足(仅%d根<需%d根，量能门未参与)" % (len(volumes or []), ln)
+        sa = sum(volumes[-sn:]) / float(sn)
+        la = sum(volumes[-ln:]) / float(ln)
+        if la <= 0:
+            return "20日均量异常(%.0f)，量能门未参与" % la
+        return "3日均量=%.0f/20日均量=%.0f=%.2f倍(门槛%.1f)" % (sa, la, sa / la, rt)
+    except Exception as _e:
+        return "量能诊断失败(%s)" % _e
+
+
+_VOL_DIAG_TS = {}          # AUD42-3：量能门诊断日志节流时间戳（独立于 _DIAG_LOG_TS）
+_VOL_DIAG_GAP = 60.0       # 同一标的量能门诊断日志最小间隔（秒）
+_F2_DIAG_TS = {}           # F2 大盘拦截日志节流时间戳（2026-10-12，独立于 _DIAG_LOG_TS）
+_F2_DIAG_GAP = 60.0        # F2 大盘拦截日志最小间隔（秒）
+_F2_DIAG_LAST = {}         # AUD75(2026-10-19) 上次输出的拦截明细（条件指纹），用于「状态未变不说」
+_F2_DIAG_HEARTBEAT = 1800.0  # AUD75 状态未变时的保底确认间隔（秒）：半小时至少确认一次仍在拦截，防「静默即正常」误判
+_ENTRY_DIAG_TS = {}        # 首仓逐条件诊断日志节流时间戳（2026-10-12）
+_ENTRY_DIAG_GAP = 120.0    # 首仓逐条件诊断最小间隔（秒）：信息量大，降频防刷屏
+
+
+def _vol_diag_due(code):
+    """AUD42-3(2026-10-09)：量能门诊断日志是否到期（按标的 60 秒节流）。
+
+    独立于 _diag_due——量能门新增的两行日志不应挤占既有的价格门/F2/持仓限额等诊断日志。
+    """
+    _now = time.time()
+    if _now - _VOL_DIAG_TS.get(code, 0.0) >= _VOL_DIAG_GAP:
+        _VOL_DIAG_TS[code] = _now
+        return True
+    return False
+
+
+def _f2_diag_due(code, detail=None):
+    """F2 大盘拦截日志的状态变化驱动节流（AUD75, 2026-10-19）。
+
+    原实现为纯时间间隔（60s）：只要仍在拦截就每分钟刷一条，
+    一个上午能刷出数十条完全相同的日志，严重淹没有信号量的诊断行。
+    现改为：拦截明细（detail）发生变化 → 立即输出；
+    明细完全相同 → 只按 _F2_DIAG_HEARTBEAT（30分钟）保底确认一次。
+    detail=None 时退化为原时间间隔行为，保证向后兼容。
+    仅影响日志输出，不参与任何交易判定（拦截本身照旧每 bar 执行）。
+    """
+    _now = time.time()
+    _last_ts = _F2_DIAG_TS.get(code, 0.0)
+    if detail is None:
+        if _now - _last_ts >= _F2_DIAG_GAP:
+            _F2_DIAG_TS[code] = _now
+            return True
+        return False
+    _key = str(detail)
+    _changed = (_F2_DIAG_LAST.get(code) != _key)
+    if _changed or (_now - _last_ts >= _F2_DIAG_HEARTBEAT):
+        _F2_DIAG_TS[code] = _now
+        _F2_DIAG_LAST[code] = _key
+        return True
+    return False
+
+
+def _entry_diag_due(code):
+    """首仓逐条件诊断日志的独立节流（2026-10-12）：
+
+    独立于 _diag_due 与 _vol_diag_due——首仓信号未成立时逐条输出
+    KDJ_K/WR/日内跌幅/底背离/趋势跟随/量能/大盘过滤 的实际状态，
+    便于盘中一眼看出卡在哪一步。仅日志，不参与任何买卖判断。
+    """
+    _now = time.time()
+    if _now - _ENTRY_DIAG_TS.get(code, 0.0) >= _ENTRY_DIAG_GAP:
+        _ENTRY_DIAG_TS[code] = _now
+        return True
+    return False
+
+
+def _entry_diag_log(code, closes, highs, lows, vols, params, day_drop, price,
+                    mkt_ok, mkt_detail, bull):
+    """首仓逐条件诊断（2026-10-12）：首仓信号未成立时逐条输出各条件实际状态。
+
+    覆盖：KDJ_K / WR / 日内跌幅 / 底背离 / 趋势跟随 / 量能 / 大盘过滤 / 个股多头。
+    纯日志，不参与任何买卖判断——仅用于盘中一眼看出卡在哪一步。
+    调用点：v9 入场路径与旧路径两处「首仓信号未成立」分支。
+    """
+    try:
+        k_th = float(params.get("kdj_k_threshold", 25))
+        w_th = float(params.get("wr_threshold", 85))
+        dip = float(params.get("dip_trigger_pct", 0.02))
+        kp = int(params.get("kdj_period", 9))
+        wp = int(params.get("wr_period", 14))
+        dn = int(params.get("divergence_n", 14))
+        k_arr, d_arr, _j_arr = calc_kdj_arr(closes, highs, lows, kp)
+        wr_arr = calc_wr_arr(closes, highs, lows, wp)
+        k9, d9, _j9 = calc_kdj_arr(closes, highs, lows, 9)
+        wr14 = calc_wr_arr(closes, highs, lows, 14)
+        wr_neg = [(-w) if w is not None else None for w in wr14]
+        div = detect_bottom_divergence(closes, k9, d9, wr_neg, dn, current_only=True)
+        k = k_arr[-1] if (k_arr and k_arr[-1] is not None) else None
+        wr = wr_arr[-1] if (wr_arr and wr_arr[-1] is not None) else None
+        dd = day_drop if day_drop is not None else 0.0
+        if k is None:
+            ktxt = "KDJ_K=无数据"
+        elif k < k_th:
+            ktxt = "KDJ_K=%.1f<%.0f达标" % (k, k_th)
+        else:
+            ktxt = "KDJ_K=%.1f>=%.0f未达标" % (k, k_th)
+        if wr is None:
+            wtxt = "WR=无数据"
+        elif wr > w_th:
+            wtxt = "WR=%.1f>%.0f达标" % (wr, w_th)
+        else:
+            wtxt = "WR=%.1f<=%.0f未达标" % (wr, w_th)
+        if dd < -dip:
+            dtxt = "日内跌幅%.2f%%<%.0f%%达标" % (dd * 100, dip * 100)
+        else:
+            dtxt = "日内跌幅%.2f%%>=-%.0f%%未达标" % (dd * 100, dip * 100)
+        divtxt = "底背离=达标" if div else "底背离=未达标"
+        _tok, _treason = trend_follow_signal(closes, params)
+        ttxt = ("趋势跟随=达标(%s)" % (_treason or "无条件")) if _tok else "趋势跟随=未达标"
+        vtxt = _vol_ratio_txt(vols, params) if vols else "量能=数据不足"
+        mtxt = ("大盘过滤=达标(%s)" % (mkt_detail or "无")) if mkt_ok else "大盘过滤=未达标(%s)" % (mkt_detail or "无")
+        btxt = "个股多头=达标(MA20>=MA60)" if bull else "个股多头=未达标(MA20<MA60)"
+        log("[%s] 首仓信号未成立·逐条诊断 | 现价%.2f | %s | %s | %s | %s | %s | %s | %s | %s"
+            % (code, price, ktxt, wtxt, dtxt, divtxt, ttxt, vtxt, mtxt, btxt))
+    except Exception as _e:
+        log("[%s] 首仓诊断异常(忽略，不影响交易): %s" % (code, _e))
+
+
+def first_position_signal(kdj_k, wr, day_drop, params=PARAMS):
+    dip_pct = params["dip_trigger_pct"]
+    k_th = params["kdj_k_threshold"]
+    w_th = params["wr_threshold"]
+    mode = params["signal_mode"]
+    d = day_drop < -dip_pct
+    k = kdj_k is not None and kdj_k < k_th
+    w = wr is not None and wr > w_th
+    if mode == "indicator":
+        return (k or w), ("KDJ_K=%.1f" % (kdj_k or 0) if k else "") + (" WR=%.1f" % (wr or 0) if w else "")
+    if mode == "price":
+        return d, ("日内跌%.1f%%" % (abs(day_drop) * 100)) if d else ""
+    ok = k or w or d
+    reasons = []
+    if k:
+        reasons.append("KDJ_K=%.1f" % (kdj_k or 0))
+    if w:
+        reasons.append("WR=%.1f" % (wr or 0))
+    if d:
+        reasons.append("日内跌%.1f%%" % (abs(day_drop) * 100))
+    return ok, " / ".join(reasons)
+
+
+def add_position_signal(state, price, params=PARAMS):
+    pyr = params["pyramid"]
+    step = params["add_step_pct"]
+    if state["tier"] < 0 or state["tier"] >= len(pyr) - 1:
+        return False
+    if state["paused"]:
+        return False
+    return price <= state["last_add_price"] * (1 - step)
+
+
+def trend_follow_signal(closes, params=PARAMS):
+    n = len(closes)
+    mid_n = params.get("trend_ma_mid", 20)
+    fast_n = params.get("trend_ma_fast", 5)
+    slope_n = params.get("trend_ma_slope_n", 5)
+    pullback = params.get("trend_pullback_pct", 0.02)
+    max_above = params.get("trend_max_above_pct", 0.06)
+    need = mid_n + slope_n
+    if n < need:
+        return False, "趋势数据不足(仅%d根，需%d根)" % (n, need)
+    ma5_curr = sum(closes[-fast_n:]) / fast_n
+    ma5_prev = sum(closes[-(fast_n + 1):-1]) / fast_n
+    ma20_curr = sum(closes[-mid_n:]) / mid_n
+    ma20_prev = sum(closes[-(mid_n + 1):-1]) / mid_n
+    ma20_old = sum(closes[-(mid_n + slope_n):-slope_n]) / mid_n
+    price = closes[-1]
+    above_pct = (price - ma20_curr) / ma20_curr if ma20_curr > 0 else 0
+    if above_pct > max_above:
+        return False, ""
+    reasons = []
+    golden_cross = (ma5_prev < ma20_prev) and (ma5_curr >= ma20_curr)
+    if golden_cross:
+        reasons.append("MA5金叉MA20")
+    ma20_rising = ma20_curr > ma20_old
+    near_ma20 = abs(above_pct) <= pullback
+    if ma20_rising and near_ma20:
+        reasons.append("回踩MA20")
+    if reasons:
+        return True, "趋势跟随: " + " | ".join(reasons)
+    return False, ""
+
+
+def entry_signal_full(closes, highs, lows, volumes, params=PARAMS, day_drop=None):
+    """首仓信号全量判定。
+    P2-1 修复(2026-10-01)：closes/highs/lows/volumes 应传入**已收盘 bar** 序列
+    （剔除当日未完成 bar），使 KDJ/WR/底背离/趋势/量能等日线指标可由日线回测复现；
+    「日内跌幅」属当日可复现量，由调用方经 day_drop 显式传入（优先 tick 昨收口径），
+    未传入时回退为最近两根已收盘 bar 的日度变化（语义=昨日跌幅，不再依赖盘中极值）。"""
+    if not closes or len(closes) < 2:
+        return False, "数据不足"
+    mode = params["signal_mode"]
+    n = len(closes)
+    if day_drop is None:
+        day_drop = ((closes[-1] - closes[-2]) / closes[-2]) if closes[-2] > 0 else 0.0
+    reason = ""
+    if mode == "kdj_rebound":
+        # 对齐 indicators.kdj_oversold_rebound 单一真源(M6)：
+        # 前置超卖=前一根 J<0（刚跌透）；当前 K<20 且 D<20；当前 K 上穿 D 金叉。
+        # 注：J=3K-2D，K>D 金叉时 J>0，故「J<0」只能作前一根前置条件，不可与金叉同根。
+        k_arr, d_arr, j_arr = calc_kdj_arr(closes, highs, lows, params["kdj_period"])
+        k_last, d_last, j_last = k_arr[-1], d_arr[-1], j_arr[-1]
+        k_prev, d_prev, j_prev = k_arr[-2], d_arr[-2], j_arr[-2]
+        pre_oversold = (j_prev is not None and j_prev < 0.0)
+        cond_os = (k_last is not None and d_last is not None
+                   and k_last < 20.0 and d_last < 20.0)
+        golden_cross = (k_prev is not None and d_prev is not None
+                        and (k_prev - d_prev) <= 1e-9
+                        and (k_last - d_last) > 1e-9)
+        ok = bool(pre_oversold and cond_os and golden_cross)
+        reason = "KDJ超卖反弹金叉" if ok else ""
+    elif mode == "divergence":
+        k_arr, d_arr, _ = calc_kdj_arr(closes, highs, lows, params["kdj_period"])
+        wr_pos = calc_wr_arr(closes, highs, lows, params["wr_period"])
+        wr_std = [(-w) if w is not None else None for w in wr_pos]
+        ok = bool(detect_bottom_divergence(closes, k_arr, d_arr, wr_std, params["divergence_n"], current_only=True))
+        reason = "底背离" if ok else ""
+    else:
+        k_arr, _, _ = calc_kdj_arr(closes, highs, lows, params["kdj_period"])
+        wr_arr = calc_wr_arr(closes, highs, lows, params["wr_period"])
+        kdj_k = k_arr[-1] if k_arr[-1] is not None else None
+        wr_v = wr_arr[-1] if wr_arr[-1] is not None else None
+        ok, main_reason = first_position_signal(kdj_k, wr_v, day_drop, params)
+        if mode in ("hybrid", "trend_hybrid") and not ok:
+            k9, d9, _ = calc_kdj_arr(closes, highs, lows, 9)
+            wr_pos = calc_wr_arr(closes, highs, lows, 14)
+            wr_std14 = [(-w) if w is not None else None for w in wr_pos]
+            if detect_bottom_divergence(closes, k9, d9, wr_std14, params["divergence_n"], current_only=True):
+                ok = True
+                main_reason = "底背离"
+        reason = main_reason
+
+    trend_only = False
+    if mode == "trend_hybrid":
+        trend_ok, trend_reason = trend_follow_signal(closes, params)
+        if trend_ok:
+            if ok:
+                reason = reason + " || " + trend_reason
+            else:
+                ok = True
+                reason = trend_reason
+                trend_only = True
+
+    if ok and params.get("volume_confirm", False) and not trend_only:
+        # AUD68(2026-10-16)：量能数据不足(不足 volume_long_n 根)时由「跳过确认」改为
+        # 「不确认即拦截」——原实现把量能门整段跳过，信号无成交量验证即放行。数据就绪闸门
+        # 已保证传入序列 >=65 根，本分支正常情况下不可达，属防御性收紧。
+        if not volumes or len(volumes) < params["volume_long_n"]:
+            return False, ("量能数据不足(仅%d根<需%d根，拦截)"
+                           % (len(volumes or []), params["volume_long_n"]))
+        vol_ok, vol_detail = check_volume_confirm(
+            volumes, params["volume_short_n"], params["volume_long_n"], params["volume_ratio"])
+        if not vol_ok:
+            return False, vol_detail
+        reason = (reason + " | " + vol_detail) if reason else vol_detail
+    return ok, reason
+
+
+def is_bull_market(closes, short_n=20, long_n=60):
+    # P2-13 修复(2026-10-01)：数据不足从 fail-open 改为 fail-closed——
+    # 趋势过滤器的默认值方向必须保守（数据不足按非牛市拦截首仓），与 F2 过滤器
+    # 「数据不足即拦截」口径统一；原 return True 在数据门槛放宽后会于趋势不明时放行开仓。
+    if len(closes) < long_n:
+        return False
+    ma_s = sum(closes[-short_n:]) / short_n
+    ma_l = sum(closes[-long_n:]) / long_n
+    return ma_s >= ma_l
+
+
+# ---------------------------------------------------------------------------
+# 5.5 F2 大盘过滤 + 数据就绪拦截闸门（2026-09-28）
+# ---------------------------------------------------------------------------
+_MARKET_IDX_CACHE = {"ts": 0.0, "closes": None, "diag": ""}
+_DATA_GATE = {"ok": None, "ts": 0.0, "last_popup": 0.0, "items": []}
+_DATA_GATE_SYM = {}   # AUD56(2026-10-13)：逐标的数据门缓存 code -> {"ok","ts","items"}（P2：谁缺数据只拦谁）
+
+
+def _ma_of(arr, n):
+    """末 n 根简单均线；数据不足返回 None。"""
+    if not arr or len(arr) < n:
+        return None
+    seg = arr[-n:]
+    return sum(seg) / float(n)
+
+
+
+def _index_closes_plausible(closes, idx):
+    """AUD48(2026-10-13)：指数日线收盘序列合理性护栏。
+
+    v1.2.18 首跑日志暴露 000300.SH 均线数值出现 34.94 这种不可能值（与真实 4481.90
+    相差百倍），疑似新接口(前复权)偶发返回异常序列。此处按指数点位的物理合理区间
+    （100~20000 且为正）做快速体检：任一收盘值越界即判定整段数据不可信。
+    返回 (ok, reason)。纯判断，零副作用，不影响任何其他路径；护栏判否时调用方
+    保守返回「数据未就绪」拦截首仓，符合 F2 「宁可错过不可错买」语义。
+    """
+    try:
+        if not closes:
+            return False, "序列为空"
+        bad = [x for x in closes if not (x > 0 and 100.0 <= x <= 20000.0)]
+        if bad:
+            return False, "收盘值越界(例%.4f)，序列不可信" % bad[0]
+        return True, "ok(%d根)" % len(closes)
+    except Exception as _e:
+        return False, "体检异常:%s" % _e
+
+
+# ---- AUD51(2026-10-13)：指数数据异常醒目告警 + 补下载熔断 ----
+#   v1.2.21 上线降级兜底后发现：QMT 客户端本地缓存的 000300.SH 日线数据本身被前复权
+#   调整或损坏（新接口返回 29.9077、老接口返回 30.8100，真实值 4481.90），
+#   两个接口都读同一个损坏数据源，降级也救不回。此时补下载只会反复拿到坏数据。
+#   AUD51 做两件事：
+#   ① 连续失败 >=3 次后，熔断补下载（5 分钟内不再刷补下载，避免日志刷屏和接口轰炸）；
+#   ② 醒目告警：写明「指数数据异常、需手动修 QMT 数据」，写入告警标志文件供外部监控读取。
+#   纯取数层防御，零行为变更，不影响任何买卖路径；护栏仍保守拦截，绝不因坏数据错买。
+_IDX_ALERT = {"fail": 0, "last_warn_ts": 0.0, "suppress_dl_until": 0.0}
+_IDX_ALERT_TTL = 300.0          # 5 分钟：告警节流 + 补下载熔断窗口
+_IDX_ALERT_FAIL_MAX = 3         # 连续失败阈值：达到后熔断补下载
+
+
+def _idx_data_alert(idx, why):
+    """AUD51：指数数据异常醒目告警（节流 5 分钟 + 熔断补下载）。
+    仅在 _idx_fetch_with_fallback 全部取数路径失败时调用。返回 None，纯告警，零副作用。
+    """
+    _now = time.time()
+    _IDX_ALERT["fail"] += 1
+    if _IDX_ALERT["fail"] >= _IDX_ALERT_FAIL_MAX:
+        _IDX_ALERT["suppress_dl_until"] = _now + _IDX_ALERT_TTL
+    if _now - _IDX_ALERT["last_warn_ts"] < _IDX_ALERT_TTL:
+        return
+    _IDX_ALERT["last_warn_ts"] = _now
+    log("[AUD51 指数数据异常告警] %s 日线取数连续失败 %d 次（新接口+老接口均不可信，最后原因：%s）" % (idx, _IDX_ALERT["fail"], why))
+    log("  疑似 QMT 客户端本地缓存的 %s 日线被前复权调整或损坏（真实值应约 4481.90，实测却出现 29.9/30.8 这种两位数点位）。补下载已熔断 %d 秒，避免反复刷坏数据。" % (idx, _IDX_ALERT_TTL))
+    log("  请手动修复：QMT 客户端『行情 → 数据管理』删除 %s 日线缓存并重新下载（建议不复权，>=120 根）。" % idx)
+    log("  护栏已保守拦截 F2 大盘过滤，不会因坏数据错买；铁律不变：坚决不止损、扣费后赚钱才卖。")
+    try:
+        def _w(fp):
+            fp.write(json.dumps({"ts": now(), "type": "index_data_bad", "idx": idx, "fail": _IDX_ALERT["fail"], "why": why}, ensure_ascii=False).encode("utf-8"))
+        _lock_and_write(DATA_GATE_ALERT_FILE, _w)
+        _mirror_copy("data_gate_alert.json")   # AUD38：镜像同步到广发 QMT 目录
+    except Exception:
+        pass    # 告警标志写失败不影响主流程（日志已输出）
+
+
+def _idx_download_suppressed():
+    """AUD51：判断指数补下载是否被熔断（熔断窗口内返回 True，调用方应跳过补下载）。"""
+    return time.time() < _IDX_ALERT["suppress_dl_until"]
+
+
+
+def _idx_fetch_with_fallback(C, idx, n):
+    """AUD50(2026-10-13)：指数日线取数 + 合理性护栏 + 老接口降级兜底。
+
+    背景：v1.2.20 上线 AUD48 指数护栏后，实盘发现 QMT 对 000300.SH 用新接口
+    get_market_data_ex（前复权 front_ratio）偶发返回被除权调整过的异常点位
+    （如 29.9077，真实值约 4481.90），护栏拦截后若只走补下载会陷入
+    「拦截→补下载→还是坏数据→继续拦截」的死循环，F2 大盘过滤被永久卡死。
+    本函数：先用 _get_hist（新接口优先），任一合理序列被护栏拦截后，
+    立即降级尝试老接口 get_history_data（int3 等比前复权 → 缺省口径），
+    哪个先通过护栏用哪个；全部失败才返回不可信。
+    返回 (closes, src, err)。纯取数，零行为变更，不影响任何买卖路径。
+    """
+    def _use(vals, src):
+        if not vals:
+            return None
+        ok, why = _index_closes_plausible(vals, idx)
+        if ok:
+            return (vals, src)
+        log("[%s] 指数取数合理性护栏拦截(%s): %s —— 尝试降级老接口" % (idx, src, why))
+        return None
+    # 1) 新接口优先（_get_hist 内部已按复权口径分级）
+    closes, st, err = _get_hist(C, idx, "close", n + 5)
+    hit = _use(closes, st or "new-api")
+    if hit:
+        _IDX_ALERT["fail"] = 0   # AUD51：取数成功，连续失败计数复位
+        return hit[0], hit[1], None
+    # 2) 降级老接口 int3（等比前复权）
+    try:
+        vals3 = _hist_vals_old(C, idx, "close", n + 5, 3)
+        hit = _use(vals3, "old/int3")
+        if hit:
+            _IDX_ALERT["fail"] = 0   # AUD51：取数成功，连续失败计数复位
+            return hit[0], hit[1], None
+    except Exception as _e3:
+        log("[%s] 老接口 int3 取数异常: %s" % (idx, _e3))
+    # 3) 降级老接口缺省（口径未知）
+    try:
+        vals0 = _hist_vals_old(C, idx, "close", n + 5, None)
+        hit = _use(vals0, "old/dflt")
+        if hit:
+            _IDX_ALERT["fail"] = 0   # AUD51：取数成功，连续失败计数复位
+            return hit[0], hit[1], None
+    except Exception as _e0:
+        log("[%s] 老接口缺省取数异常: %s" % (idx, _e0))
+    _idx_data_alert(idx, (err or "新接口被护栏拦截且老接口均不可信"))   # AUD51 数据异常告警
+    return None, "-", (err or "新接口被护栏拦截且老接口均不可信")
+def _get_index_closes_yday(C, n=65):
+    """取指数日线收盘序列，口径=昨日及以前（剔除最后一根当日进行中 bar）。
+
+    与回测 F2 语义一致（idx_bull[i] 用 i-1 及以前数据）。60s 结果缓存；
+    P2-3 修复(2026-10-01)：失败态同样进入 DATA_GATE_FAIL_TTL 负缓存——
+    此前缓存命中条件要求 closes 非空，数据源异常时每根 bar 都重新探测指数。
+    取不到/不足 n 根时触发补下载并返回 (None, 原因)。
+    """
+    idx = PARAMS.get("market_filter_index", "000300.SH")
+    now = time.time()
+    c = _MARKET_IDX_CACHE
+    if c["closes"] is not None and now - c["ts"] < DATA_GATE_CHECK_TTL:
+        _pl, _plr = _index_closes_plausible(c["closes"], idx)
+        if not _pl:
+            if not _idx_download_suppressed():   # AUD51 熔断：连续失败时不再刷补下载
+                _try_download_hist(idx)
+            c["closes"], c["ts"], c["diag"] = None, now, "缓存护栏拦截:%s" % _plr
+            return None, c["diag"]
+        if len(c["closes"]) >= n:
+            return c["closes"][-n:], c["diag"]
+        return None, c["diag"]
+    if c["closes"] is None and c["ts"] > 0 and now - c["ts"] < DATA_GATE_FAIL_TTL:
+        return None, c["diag"]      # 失败态负缓存：10 秒内不重复探测
+    closes, st, err = _idx_fetch_with_fallback(C, idx, n + 5)
+    if closes:
+        # 剔除当日进行中 bar（最后一根）：与回测「昨日及以前」口径一致
+        closes_y = closes[:-1] if len(closes) >= 2 else closes
+        if len(closes_y) >= n:
+            c["closes"], c["ts"], c["diag"] = closes_y, now, "ok(%d根,源=%s)" % (len(closes_y), st or "-")
+            return closes_y[-n:], c["diag"]
+        c["closes"], c["ts"], c["diag"] = None, now, "不足%d根(实得%d)" % (n, len(closes_y))
+    else:
+        c["closes"], c["ts"], c["diag"] = None, now, (err or "取数失败")
+    try:
+        if not _idx_download_suppressed():   # AUD51 熔断：连续失败时不再刷补下载
+            _try_download_hist(idx)
+    except Exception:
+        pass
+    return None, c["diag"]
+
+
+def _f2_strong_exempt(closes, highs, lows, volumes, params, day_drop):
+    """AUD46(2026-10-12)：个股极强信号是否可豁免 F2 大盘过滤。
+
+    仅当 params["f2_exempt_on_strong"] 开启且 F2 未通过时，由调用方评估本函数。
+    极强信号定义（三条件需同时满足）：
+      1) 个股多头：MA20 >= MA60（bull=True）；
+      2) 首仓信号成立：first_position_signal 或底背离或 trend_follow_signal 任一为真；
+      3) 量能放量确认 或 趋势跟随成立（即已跨过量能门，避免无量的信号钻空子）。
+    返回 (exempt: bool, detail: str)。纯计算，无副作用，不影响任何其他路径。
+    """
+    try:
+        if not params.get("f2_exempt_on_strong", False):
+            return False, ""
+        # 1) 个股多头
+        if not is_bull_market(closes):
+            return False, "个股非多头(MA20<MA60)"
+        # 2) 首仓信号成立
+        mode = params["signal_mode"]
+        k_arr, _, _j = calc_kdj_arr(closes, highs, lows, params["kdj_period"])
+        wr_arr = calc_wr_arr(closes, highs, lows, params["wr_period"])
+        kdj_k = k_arr[-1] if (k_arr and k_arr[-1] is not None) else None
+        wr_v = wr_arr[-1] if (wr_arr and wr_arr[-1] is not None) else None
+        sig_ok, _main_reason = first_position_signal(kdj_k, wr_v, day_drop, params)
+        sig_reason = _main_reason
+        if not sig_ok and mode in ("hybrid", "trend_hybrid"):
+            k9, d9, _j9 = calc_kdj_arr(closes, highs, lows, 9)
+            wr14 = calc_wr_arr(closes, highs, lows, 14)
+            wr_neg = [(-w) if w is not None else None for w in wr14]
+            if detect_bottom_divergence(closes, k9, d9, wr_neg, params["divergence_n"],
+                                        current_only=True):
+                sig_ok = True
+                sig_reason = "底背离"
+        trend_ok = False
+        trend_reason = ""
+        if mode == "trend_hybrid":
+            trend_ok, trend_reason = trend_follow_signal(closes, params)
+            if trend_ok and not sig_ok:
+                sig_ok = True
+                sig_reason = trend_reason
+        if not sig_ok:
+            return False, "首仓信号未成立(KDJ/WR/跌幅/底背离/趋势均未触发)"
+        # 3) 量能或趋势其一确认，视为极强信号
+        if trend_ok:
+            return True, "趋势跟随成立(%s) %s" % (sig_reason, trend_reason)
+        vol_ok, vol_detail = check_volume_confirm(
+            volumes, params["volume_short_n"], params["volume_long_n"], params["volume_ratio"])
+        if vol_ok:
+            return True, "放量确认 + 信号成立(%s)" % sig_reason
+        return False, "量能未放量(未达%.1f倍)且非趋势路径" % params["volume_ratio"]
+    except Exception as _e:
+        return False, "豁免判定异常(保守不豁免): %s" % _e
+
+
+def market_filter_gate_ok(C, code, params, closes, highs, lows, vols, day_drop,
+                          mkt_ok, mkt_detail):
+    """AUD46(2026-10-12)：F2 大盘过滤首仓门（含个股极强信号豁免）。
+
+    返回 (gate_ok, note)：
+      - F2 通过（mkt_ok=True）或 开关关闭时，gate_ok 与 mkt_ok 完全一致（原风控）。
+      - F2 未通过但开关开启、且触发极强信号豁免时，gate_ok=True 并附带说明。
+    仅在 F2 未通过时额外计算，不改变任何加仓/止盈/躺平/冷却/v9 路径。
+    """
+    if mkt_ok or not params.get("f2_exempt_on_strong", False):
+        return mkt_ok, ""
+    _ex, _exd = _f2_strong_exempt(closes, highs, lows, vols, params, day_drop)
+    if _ex:
+        return True, "AUD46豁免F2: %s" % _exd
+    return False, _exd
+
+
+def market_filter_ok(C, params=None):
+    """F2 大盘过滤：沪深300 昨收 MA20 >= MA60 才允许开首仓（只挡首仓）。
+
+    返回 (ok, detail)。指数数据取不到/不足 -> 拦截（与回测 idx_bull[i]=False 语义一致，
+    宁可错过不可错买）；MA_SHORT/MA_LONG 复用 PARAMS 均线窗口。
+    """
+    p = params or PARAMS
+    if not p.get("market_filter"):
+        return True, "大盘过滤关闭"
+    idx = p.get("market_filter_index", "000300.SH")
+    closes, diag = _get_index_closes_yday(C, p.get("ma_long", 60) + 5)
+    if not closes:
+        return False, "指数%s数据未就绪(%s)" % (idx, diag)
+    ma_s = _ma_of(closes, p.get("ma_short", 20))
+    ma_l = _ma_of(closes, p.get("ma_long", 60))
+    if ma_s is None or ma_l is None:
+        return False, "指数%s均线数据不足(MA%d/MA%d)" % (idx, p.get("ma_short", 20), p.get("ma_long", 60))
+    if ma_s >= ma_l:
+        return True, "大盘多头(%s MA%d=%.2f>=MA%d=%.2f)" % (
+            idx, p.get("ma_short", 20), ma_s, p.get("ma_long", 60), ma_l)
+    return False, "大盘空头(%s MA%d=%.2f<MA%d=%.2f)" % (
+        idx, p.get("ma_short", 20), ma_s, p.get("ma_long", 60), ma_l)
+
+
+def _data_gate_index_items(C):
+    """共享数据项：沪深300 指数日线（F2 大盘过滤共用，任一标的首仓都依赖，故逐标的门也查它）。"""
+    items = []
+    if PARAMS.get("market_filter"):
+        idx = PARAMS.get("market_filter_index", "000300.SH")
+        closes, diag = _get_index_closes_yday(C, PARAMS.get("ma_long", 60) + 5)
+        if not closes:
+            items.append((idx + "（沪深300指数 日线）",
+                          "F2 大盘过滤：首仓前判定沪深300 MA20/MA60 多头", diag))
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 5.6 市场情绪模块（AUD72 2026-10-17 用户指定落地：仅影响买入侧，卖出/铁律零触碰）
+# 可复现口径：所有输入只用「已收盘 bar」（指数日线剔当日 bar，与 F2 同源；个股用
+# _handlebar_impl 的已收盘切片 _c_closes/_c_vols），任何当日未走完的数据一律不用，
+# 杜绝前视/未来函数；数据不足 fail-open 放行（宁可错过不可错买由 F2/资金门另行承担）。
+# SENTIMENT_CFG 为独立配置，不参与 PARAMS 参数指纹（_PARAM_FP），升级不会触发
+# 「参数变更告警」，也不会改动状态文件 param_fp 校验。
+# ---------------------------------------------------------------------------
+SENTIMENT_ENABLED = False  # AUD77(2026-10-19)：用户拍板默认关闭情绪门控——恐慌/狂热日不再拦截买入；
+                                # 如需启用改回 True 即可，SENTIMENT_CFG 保持不动（零行为变更，可回滚）
+SENTIMENT_CFG = {
+    "mode": "gate_and_scale",       # gate_and_scale / gate / off（off=模块放行，可一键回滚）
+    "index": "000300.SH",           # 情绪基准指数（与 F2 大盘过滤同源）
+    "lookback": 60,                 # 滚动分位窗口（已收盘 bar 数；不足则 fail-open 放行）
+    "ewma_span": 10,                # 复合情绪分 EWMA 平滑跨度（防单根分位突变抖动）
+    "weights": {                    # 子指标权重（自动重归一；失效子指标自动剔除）
+        "idx_trend": 0.20,          # 指数趋势：MA5/MA20 相对强弱
+        "idx_momentum": 0.15,       # 指数动能：近5日收益
+        "idx_vola": 0.20,           # 指数波动：近20日收益标准差（高波动=情绪差，反向编码）
+        "idx_vol_ratio": 0.10,      # 指数量能：最近已收盘日量 / 前20日均量
+        "idx_bias": 0.10,           # 指数乖离：收盘/MA20-1（过热即情绪过热）
+        "stk_rel": 0.15,            # 个股相对强弱：个股-指数 近5日收益
+        "stk_vol_ratio": 0.10,      # 个股量能：最近已收盘日量 / 前20日均量
+    },
+    "block_panic": True,            # 恐慌(EWMA<0.20)：禁首仓 + 禁 M2/M3 加仓
+    "block_euphoric": True,         # 狂热(EWMA>0.80)：禁首仓 + 禁 M2/M3 加仓（防追高）
+    "scale_entry": True,            # 首仓计划额按情绪缩放（只减不加，上限恒 1.0）
+    "scale_add": True,              # M2/M3 档位金额按情绪缩放（只减不加，上限恒 1.0）
+    "scale_map": {                  # 分档 -> 缩放系数（只减不加）
+        "panic": 0.5, "cautious": 0.7, "neutral": 1.0,
+        "optimistic": 1.0, "euphoric": 1.0,
+    },
+    "alert_gap": 3600.0,            # 极端情绪(恐慌/狂热)风险事件推送节流（秒）
+}
+_SENT_IDX_CACHE = {"ts": 0.0, "closes": None, "vols": None, "diag": ""}  # 指数收盘+成交量缓存（60s）
+_SENT_TS = {}            # code -> (ts, dict) 情绪评估结果短缓存（2s，防同bar重复取数）
+_SENT_EWMA = {}          # code -> EWMA 平滑后的复合情绪分（内存态，重启重建）
+_SENT_ALERT_TS = {}      # code -> 极端情绪风险事件上次推送时间戳
+_SENT_DIAG_TS = {}       # code -> 情绪日志节流时间戳
+_SENT_DIAG_GAP = 300.0   # 情绪日志最小间隔（秒）
+
+
+def _sma(seq, n):
+    """简单移动平均；数据不足返回 None。"""
+    if seq is None or n <= 0 or len(seq) < n:
+        return None
+    return sum(seq[-n:]) / float(n)
+
+
+def _std(xs):
+    """总体标准差；数据不足返回 None。"""
+    if not xs or len(xs) < 2:
+        return None
+    m = sum(xs) / float(len(xs))
+    return (sum((x - m) ** 2 for x in xs) / float(len(xs))) ** 0.5
+
+
+def _pct_rank(seq, val):
+    """val 在历史序列 seq 中的百分位(0~1)。seq 不含 val（即历史值），无前视。"""
+    if not seq:
+        return 0.5
+    cnt = 0
+    for x in seq:
+        if x < val:
+            cnt += 1
+    return min(1.0, max(0.0, cnt / float(len(seq))))
+
+
+def _ewma(prev, cur, span):
+    """EWMA 平滑；prev 缺失时以 cur 起算。"""
+    if prev is None:
+        return cur
+    alpha = 2.0 / (span + 1.0)
+    return alpha * cur + (1.0 - alpha) * prev
+
+
+def _sent_diag_due(code):
+    """情绪诊断日志节流：同一标的 _SENT_DIAG_GAP 秒内最多一条。"""
+    _now = time.time()
+    if _now - _SENT_DIAG_TS.get(code, 0.0) >= _SENT_DIAG_GAP:
+        _SENT_DIAG_TS[code] = _now
+        return True
+    return False
+
+
+def _sentiment_fetch_index(C, n=70):
+    """情绪基准指数日线收盘+成交量（口径=昨日及以前，剔当日进行中bar；60s缓存）。
+    与 _get_index_closes_yday 同源语义（F2 大盘过滤），额外带成交量。
+    返回 (closes, vols, err)；失败返回 (None, None, err)。"""
+    idx = SENTIMENT_CFG.get("index", "000300.SH")
+    _now = time.time()
+    c = _SENT_IDX_CACHE
+    if c["closes"] is not None and _now - c["ts"] < DATA_GATE_CHECK_TTL:
+        return c["closes"], c["vols"], c["diag"]
+    if c["closes"] is None and c["ts"] > 0 and _now - c["ts"] < DATA_GATE_FAIL_TTL:
+        return None, None, c["diag"]
+    closes, vols, err = None, None, "取数失败"
+    try:
+        data = C.get_market_data_ex(["close", "volume"], [idx], period="1d", count=n,
+                                    dividend_type="front_ratio", fill_data=True)
+        df = data.get(idx) if isinstance(data, dict) else None
+        if df is not None and len(df) > 0:
+            _cs, _vs, _ok = [], [], True
+            for _x in list(df["close"]):
+                _f = float(_x)
+                if _f != _f:
+                    _ok = False
+                    break
+                _cs.append(_f)
+            for _x in list(df["volume"]):
+                _f = float(_x)
+                if _f != _f:
+                    _ok = False
+                    break
+                _vs.append(_f)
+            if _ok and len(_cs) == len(_vs) and len(_cs) >= 2:
+                closes, vols = _cs[:-1], _vs[:-1]      # 剔除当日进行中 bar（与 F2 一致）
+                err = "ok(%d根)" % len(closes)
+    except Exception as _e:
+        err = "ex接口异常:%s" % _e
+    c["ts"] = _now
+    if closes and len(closes) >= 20:
+        c["closes"], c["vols"], c["diag"] = closes, vols, err
+    else:
+        c["closes"], c["vols"], c["diag"] = None, None, err
+    return closes, vols, err
+
+
+def _sentiment_eval(C, code, closes, vols, params):
+    """情绪评估（AUD72）：7 硬指标 -> 滚动分位(0~1) -> 加权复合分 -> EWMA 平滑 -> 档位/门控/缩放。
+    输入只用已收盘 bar（closes/vols 为个股已收盘切片；指数由 _sentiment_fetch_index 取昨日及以前）。
+    返回 dict：
+      ok:        False=模块关闭或数据不足（调用方视为放行）
+      score/ew:  原始复合分 / EWMA 平滑分（0~1）
+      regime:    panic/cautious/neutral/optimistic/euphoric
+      block:     True=情绪门拦截（禁买入）
+      scale_entry/scale_add: 首仓/M2/M3 缩放系数（只减不加）
+      note/sub:  摘要说明 / 各子指标分位(0~1)
+    仅影响买入侧；不触碰任何卖出/止盈/躺平路径。数据不足 fail-open 放行并节流提示。"""
+    _now = time.time()
+    _c0 = _SENT_TS.get(code)
+    if _c0 and _now - _c0[0] < 2.0:
+        return _c0[1]
+    base = {"ok": False, "score": 0.5, "ew": 0.5, "regime": "neutral",
+            "block": False, "scale_entry": 1.0, "scale_add": 1.0,
+            "note": "模块关闭", "sub": {}}
+    if not SENTIMENT_ENABLED or SENTIMENT_CFG.get("mode") == "off":
+        _SENT_TS[code] = (_now, base)
+        return base
+    cfg = SENTIMENT_CFG
+    ix_c, ix_v, ix_err = _sentiment_fetch_index(C, int(cfg.get("lookback", 60)) + 10)
+    if not ix_c or len(ix_c) < 20:
+        base["note"] = "情绪指数数据不足(需>=20根, %s)" % (ix_err or "取数失败")
+        if _sent_diag_due(code):
+            log("[%s] 情绪模块 | 数据不足，本bar放行(fail-open)：%s" % (code, base["note"]))
+        _SENT_TS[code] = (_now, base)
+        return base
+    # ---- 历史分位（同公式滚动到历史每个位置，再对今日值排名——无前视） ----
+    def _hist_trend(seq):
+        out = []
+        for i in range(len(seq)):
+            if i >= 19:
+                a = sum(seq[i-4:i+1]) / 5.0
+                b = sum(seq[i-19:i+1]) / 20.0
+                out.append((a / b - 1.0) if b > 0 else None)
+            else:
+                out.append(None)
+        return out
+
+    def _hist_ret5(seq):
+        out = []
+        for i in range(len(seq)):
+            out.append((seq[i] / seq[i-5] - 1.0) if (i >= 5 and seq[i-5] > 0) else None)
+        return out
+
+    def _hist_vola(seq):
+        out = []
+        for i in range(len(seq)):
+            if i >= 20:
+                rr = []
+                for j in range(i-19, i+1):
+                    if seq[j-1] > 0:
+                        rr.append(seq[j] / seq[j-1] - 1.0)
+                out.append(_std(rr) if len(rr) >= 5 else None)
+            else:
+                out.append(None)
+        return out
+
+    def _hist_vol_ratio(vseq):
+        out = []
+        for i in range(len(vseq)):
+            if i >= 20:
+                seg = [x for x in vseq[i-20:i] if x > 0]
+                m = (sum(seg) / float(len(seg))) if seg else None
+                out.append((vseq[i] / m) if (m and m > 0) else None)
+            else:
+                out.append(None)
+        return out
+
+    def _hist_bias(seq):
+        out = []
+        for i in range(len(seq)):
+            if i >= 19:
+                b = sum(seq[i-19:i+1]) / 20.0
+                out.append((seq[i] / b - 1.0) if b > 0 else None)
+            else:
+                out.append(None)
+        return out
+
+    def _hist_rel(stk, ixr):
+        out = []
+        for i in range(len(stk)):
+            if i >= 5 and stk[i-5] > 0 and i < len(ixr) and ixr[i-5] > 0:
+                out.append((stk[i] / stk[i-5] - 1.0) - (ixr[i] / ixr[i-5] - 1.0))
+            else:
+                out.append(None)
+        return out
+
+    _hix_trend = _hist_trend(ix_c)
+    _hix_mom = _hist_ret5(ix_c)
+    _hix_vola = _hist_vola(ix_c)
+    _hix_vr = _hist_vol_ratio(ix_v) if (ix_v and len(ix_v) == len(ix_c)) else [None] * len(ix_c)
+    _hix_bias = _hist_bias(ix_c)
+    _aln = min(len(closes), len(ix_c))
+    _hstk_rel = _hist_rel(closes[-_aln:], ix_c[-_aln:]) if _aln >= 6 else [None] * len(closes)
+    _hstk_vr = _hist_vol_ratio(vols) if (vols and len(vols) == len(closes)) else [None] * len(closes)
+    hist_map = {
+        "idx_trend": _hix_trend, "idx_momentum": _hix_mom, "idx_vola": _hix_vola,
+        "idx_vol_ratio": _hix_vr, "idx_bias": _hix_bias,
+        "stk_rel": _hstk_rel, "stk_vol_ratio": _hstk_vr,
+    }
+
+    def _rank_last(hist):
+        past = [x for x in hist[:-1] if x is not None]
+        cur = hist[-1] if hist else None
+        if cur is None or not past:
+            return None
+        return _pct_rank(past, cur)
+
+    w = cfg.get("weights", {}) or {}
+    sub_score = {}
+    for k, ww in w.items():
+        _h = hist_map.get(k)
+        r = _rank_last(_h) if _h else None
+        if r is None:
+            sub_score[k] = None
+            continue
+        sub_score[k] = (1.0 - r) if (k == "idx_vola") else r
+    num, den = 0.0, 0.0
+    for k, ww in w.items():
+        v = sub_score.get(k)
+        if v is None:
+            continue
+        num += ww * v
+        den += ww
+    if den <= 0:
+        base["note"] = "情绪子指标全失效，本bar放行(fail-open)"
+        _SENT_TS[code] = (_now, base)
+        return base
+    score = min(1.0, max(0.0, num / den))
+    ew = _ewma(_SENT_EWMA.get(code), score, int(cfg.get("ewma_span", 10)))
+    _SENT_EWMA[code] = ew
+    if ew < 0.20:
+        regime = "panic"
+    elif ew < 0.40:
+        regime = "cautious"
+    elif ew < 0.60:
+        regime = "neutral"
+    elif ew < 0.80:
+        regime = "optimistic"
+    else:
+        regime = "euphoric"
+    block = False
+    if cfg.get("block_panic") and regime == "panic":
+        block = True
+    if cfg.get("block_euphoric") and regime == "euphoric":
+        block = True
+    _sm = cfg.get("scale_map", {}) or {}
+    _sc = float(_sm.get(regime, 1.0) or 1.0)
+    res = {
+        "ok": True, "score": score, "ew": ew, "regime": regime,
+        "block": block,
+        "scale_entry": _sc if cfg.get("scale_entry") else 1.0,
+        "scale_add": _sc if cfg.get("scale_add") else 1.0,
+        "note": "加权%.2f 平滑%.2f 档位%s" % (score, ew, regime),
+        "sub": sub_score,
+    }
+    _SENT_TS[code] = (_now, res)
+    # 风控监测：极端情绪告警（节流）+ 常规日志（节流）
+    if regime in ("panic", "euphoric"):
+        if _now - _SENT_ALERT_TS.get(code, 0.0) >= float(cfg.get("alert_gap", 3600.0)):
+            _SENT_ALERT_TS[code] = _now
+            _notify_risk("sentiment_extreme",
+                         "%s 情绪极端(%s)：EWMA=%.2f，情绪门拦截买入=%s，仓位缩放=%.2f"
+                         % (code, regime, ew, block, _sc))
+    if _sent_diag_due(code):
+        log("[%s] 情绪 | 分=%.2f EWMA=%.2f | 档位=%s | 拦截=%s | 缩放=%.2f/%.2f | %s"
+            % (code, score, ew, regime, block, res["scale_entry"], res["scale_add"],
+               ("; ".join("%s=%.2f" % (k, v) for k, v in sorted(sub_score.items()) if v is not None))))
+    return res
+
+
+def _data_gate_symbol_items(C, code):
+    """单标的自身数据项：该标的日线是否足量（AUD56：逐标的判定，互不拖累）。"""
+    closes, st, err = _get_hist(C, code, "close", PARAMS.get("ma_long", 60) + 5)
+    if not closes or len(closes) < PARAMS.get("ma_long", 60) + 5:
+        return [(code + "（标的 日线）",
+                 "信号指标计算（KDJ/WR/均线/量能）",
+                 "不足%d根(实得%d)" % (PARAMS.get("ma_long", 60) + 5, len(closes or [])))]
+    return []
+
+
+def _data_gate_missing_items(C, codes):
+    """收集未就绪数据项清单：[(名称, 用途, 现状)]（init 自检/stop 汇总等全局视图用）。"""
+    items = _data_gate_index_items(C)
+    for code in codes:
+        items.extend(_data_gate_symbol_items(C, code))
+    return items
+
+
+def _popup_data_gate(items):
+    """数据未就绪的非阻塞告警（P1-5 修复，2026-10-01）。
+
+    原实现为 ctypes MessageBoxW 无超时模态弹窗——阻塞 QMT 内置 Python 单线程，
+    无人值守时本策略与同客户端内全部策略无限期停摆、止盈等风控通道一并冻结。
+    现改为：醒目日志 + 写告警标志文件（DATA_GATE_ALERT_FILE，供外部看门狗/监控读取）。
+    返回 0（保持原签名兼容）。
+    """
+    lines = ["以下数据尚未就绪，策略已暂停交易（不会产生任何委托）：", ""]
+    for name, use, diag in items:
+        lines.append("  · %s" % name)
+        lines.append("      用途：%s" % use)
+        lines.append("      现状：%s" % diag)
+    lines += ["", "请在 QMT 客户端『行情 → 数据管理』中补齐缺失数据：",
+              "  指数日线(000300.SH) 与 标的日线(002142.SZ 等)，周期=日线，数量建议 >= 65 根。"]
+    log("【数据就绪告警】\n" + chr(10).join(lines))
+    try:
+        def _w(fp):
+            fp.write(json.dumps({"ts": now(), "items": [x[0] for x in items]},
+                                ensure_ascii=False).encode("utf-8"))
+        _lock_and_write(DATA_GATE_ALERT_FILE, _w)
+        _mirror_copy("data_gate_alert.json")   # AUD38：镜像同步到广发 QMT 目录
+    except Exception:
+        pass    # 告警标志写失败不影响主流程（日志已输出）
+    return 0
+
+
+def _popup_data_gate_interactive(items):
+    """交互式模态弹窗（仅显式设置 GF_DATA_GATE_POPUP=1 时启用；P1-5）。
+
+    注意：模态弹窗会阻塞内置 Python 单线程，仅限有人值守场景；
+    弹窗失败（无桌面/非 Windows/沙箱拦截）静默降级，不影响主流程。
+    """
+    lines = ["以下数据尚未就绪，策略已暂停交易（不会产生任何委托）：", ""]
+    for name, use, diag in items:
+        lines.append("  · %s" % name)
+        lines.append("      用途：%s" % use)
+        lines.append("      现状：%s" % diag)
+    lines += ["", "请在 QMT 客户端『行情 → 数据管理』中补齐缺失数据：",
+              "  指数日线(000300.SH) 与 标的日线(002142.SZ 等)，周期=日线，数量建议 >= 65 根。",
+              "", "补齐后点击「确定」，策略将立即复查并自动恢复交易。"]
+    try:
+        import ctypes
+        return ctypes.windll.user32.MessageBoxW(0, chr(10).join(lines),
+                                                "策略数据就绪检查 · 已拦截交易", 0x40)
+    except Exception as e:
+        log("数据就绪弹窗失败(降级为日志拦截): %s" % e)
+        return 0
+
+
+def data_gate_ready(C, codes, popup=None):
+    """数据就绪拦截闸门：所需数据未就绪 -> 拦截交易 + 非阻塞告警，补齐后自动放行。
+
+    返回 True=放行。结果缓存 DATA_GATE_CHECK_TTL 秒（通过态）；
+    P2-3 修复(2026-10-01)：未通过态同样进入 DATA_GATE_FAIL_TTL(10s) 负缓存，
+    数据异常时不再每根 bar 重复探测行情接口（此前每标的最多 5 形态×4 字段 + 指数探测）。
+    P1-5 修复(2026-10-01)：告警改为非阻塞（日志 + 标志文件），模态弹窗仅在
+    显式设置 GF_DATA_GATE_POPUP=1 时启用且自带节流。
+    """
+    if not DATA_GATE_ENABLED:
+        return True
+    now = time.time()
+    g = _DATA_GATE
+    if g["ok"] and now - g["ts"] < DATA_GATE_CHECK_TTL:
+        return True
+    if g["ok"] is False and now - g["ts"] < DATA_GATE_FAIL_TTL:
+        return False    # 失败态负缓存：10 秒内不重复探测
+    items = _data_gate_missing_items(C, codes)
+    if not items:
+        if g["ok"] is False:
+            log("数据就绪闸门放行：所需数据已补齐，恢复交易")
+        # AUD68(2026-10-16)：告警标志文件的清除移出「上次失败」条件——进程重启后首查即通过时，
+        # 原实现永不删过期告警牌（实证：2026-10-13 12:07 告警在数据补齐、10-14 开仓后仍残留
+        # 3 天，外部看门狗误判仍在拦截）。放行即无条件重算并清除/刷新标志。
+        try:
+            if os.path.exists(DATA_GATE_ALERT_FILE):
+                os.remove(DATA_GATE_ALERT_FILE)
+                _mirror_remove("data_gate_alert.json")   # AUD38：镜像同步删除告警标志
+        except Exception:
+            pass
+        g["ok"], g["ts"], g["items"] = True, now, []
+        return True
+    g["ok"], g["ts"], g["items"] = False, now, items
+    for name, use, diag in items:
+        log("数据就绪拦截 | %s 未就绪(%s) | 用途: %s —— 已拦截交易，等待补数据"
+            % (name, diag, use))
+    # AUD36(2026-10-08 第四轮零预设独立审计)：修复 P1-5 回归——原 _do_popup =
+    # DATA_GATE_POPUP if popup is None else popup 使调用方传 popup=True 时无视环境变量开关
+    # 直接弹无超时模态框，无人值守启动时若数据缺失会把整个 QMT 单线程卡死（与「单线程铁律」
+    # 及本函数注释意图相悖）。现改为：模态弹窗唯一受 GF_DATA_GATE_POPUP=1 控制，popup 参数
+    # 只能用于强制禁用(False)、不能用于强制启用；调用方传 True/None 均等同按环境变量决定。
+    _do_popup = bool(DATA_GATE_POPUP and (popup is not False))
+    if now - g["last_popup"] >= DATA_GATE_POPUP_GAP:
+        g["last_popup"] = now
+        _popup_data_gate(items)                 # 非阻塞告警：醒目日志 + 标志文件（默认路径）
+        if _do_popup:
+            _popup_data_gate_interactive(items)  # 交互弹窗：仅显式开启时（P1-5）
+            # 弹窗确认后立即复查：已补齐 -> 本根 bar 即放行
+            items2 = _data_gate_missing_items(C, codes)
+            if not items2:
+                log("数据就绪闸门放行：复查通过，恢复交易")
+                g["ok"], g["ts"] = True, time.time()
+                return True
+    return False
+
+
+def data_gate_ready_for(C, code, popup=None):
+    """逐标的数据就绪闸门（AUD56，2026-10-13，用户拍板 P2 方案A）。
+
+    与全局版 data_gate_ready 的区别：只查「沪深300指数（F2 共用）+ 当前这一只标的」
+    的日线是否足量。别的标的数据没补齐，不再连累本标的被拦——谁缺数据只拦谁。
+    缓存口径/负缓存/弹窗节流与全局版一致（DATA_GATE_CHECK_TTL / DATA_GATE_FAIL_TTL /
+    DATA_GATE_POPUP_GAP）；告警标志文件按「全部启用标的的剩余缺失项」实时刷新，
+    某标的补齐但仍有别的标的缺失时改写标志而不是误删。
+    返回 True=本标的放行。
+    """
+    if not DATA_GATE_ENABLED:
+        return True
+    now = time.time()
+    g = _DATA_GATE_SYM.setdefault(code, {"ok": None, "ts": 0.0, "items": []})
+    if g["ok"] and now - g["ts"] < DATA_GATE_CHECK_TTL:
+        return True
+    if g["ok"] is False and now - g["ts"] < DATA_GATE_FAIL_TTL:
+        return False    # 失败态负缓存：10 秒内不重复探测
+    items = _data_gate_index_items(C) + _data_gate_symbol_items(C, code)
+    if not items:
+        if g["ok"] is False:
+            log("数据就绪闸门放行：%s 所需数据已补齐，恢复交易（其他标的数据不足不影响本标的）" % code)
+        # AUD68(2026-10-16)：告警标志文件的清除/改写移出「上次失败」条件——进程重启后首查即
+        # 通过时原实现永不删过期告警牌（实证：2026-10-13 12:07 告警在数据补齐、10-14 开仓后
+        # 仍残留 3 天，外部看门狗持续误判「仍在拦截」）。放行即无条件重算全局剩余缺失项：
+        # 全齐才删告警标志，否则改写为剩余项，防误删。
+        try:
+            rest = _data_gate_missing_items(C, [s2["code"] for s2 in enabled_symbols()])
+            if not rest:
+                if os.path.exists(DATA_GATE_ALERT_FILE):
+                    os.remove(DATA_GATE_ALERT_FILE)
+                    _mirror_remove("data_gate_alert.json")
+            else:
+                def _w(fp, _rest=rest):
+                    fp.write(json.dumps({"ts": now(), "items": [x[0] for x in _rest]},
+                                        ensure_ascii=False).encode("utf-8"))
+                _lock_and_write(DATA_GATE_ALERT_FILE, _w)
+                _mirror_copy("data_gate_alert.json")
+        except Exception:
+            pass
+        g["ok"], g["ts"], g["items"] = True, now, []
+        return True
+    g["ok"], g["ts"], g["items"] = False, now, items
+    for name, use, diag in items:
+        log("数据就绪拦截 | %s 未就绪(%s) | 用途: %s —— 仅拦截本标的(%s)，其他标的不受影响，等待补数据"
+            % (name, diag, use, code))
+    _do_popup = bool(DATA_GATE_POPUP and (popup is not False))
+    _gg = _DATA_GATE
+    if now - _gg["last_popup"] >= DATA_GATE_POPUP_GAP:
+        _gg["last_popup"] = now
+        _popup_data_gate(items)                 # 非阻塞告警：醒目日志 + 标志文件
+        if _do_popup:
+            _popup_data_gate_interactive(items)
+            items2 = _data_gate_index_items(C) + _data_gate_symbol_items(C, code)
+            if not items2:
+                log("数据就绪闸门放行：复查通过，%s 恢复交易" % code)
+                g["ok"], g["ts"] = True, time.time()
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# 6. 仓位 / 成本 / 风控（与 strategy_core.py 单一真源一致）
+# ---------------------------------------------------------------------------
+def calc_shares(amount, price, lot_size=100, cash=None):
+    """按「闸门后金额」计算可买股数（2026-09-28 v5 起为严格模式）。
+
+    原实现含「不足 1 手补 1 手」兜底，且兜底判断用的是账户现金 cash 而非传入的
+    amount —— 只要账户有钱就强行买 1 手：
+        shares = int(amount / price / lot) * lot
+        if shares == 0 and cash >= price * lot: shares = lot      # 用的是 cash！
+    后果：单档金额（cash_use）小于 1 手时，仍会按 1 手下单，实际买入超出该档预算；
+    且该内层兜底先于调用方基于 cash_use 的兜底触发，使 2026-08-28 的闸门修复失效——
+    调用方那段 `if vol == 0 and cash_use >= price*lot` 实际成为死代码。
+    实测：capital_cap=5000（首仓预算 2500 元）仍会下 100 股(≈3500 元)；
+          capital_cap=50000 时 M2 第 4 档（预算 2500 元）同样强行买 1 手。
+
+    现改为严格按闸门后金额计算，不足 1 手返回 0（不下单），并以可用现金封顶：
+        if cash is not None and cash < amount: amount = cash
+        return int(amount / price / lot_size) * lot_size
+
+    调用方（首仓 / M2 / M3）传入的都是闸门后金额，故实际下单金额恒 ≤ 闸门金额。
+    cash 参数保留仅为兼容既有调用签名。
+    """
+    if price <= 0:
+        return 0
+    if cash is not None and cash < amount:
+        amount = cash          # 不得超可用现金
+    return int(amount / price / lot_size) * lot_size
+
+
+def compute_buy_cost(volume, price,
+                     commission_rate=None, commission_min=None,
+                     transfer_fee_rate=None):
+    """买入总成本（含费口径）。AUD78(2026-10-19)：费率改为读全局券商真实费率常量，
+    不再使用写死的默认参数（原默认 万2.5 与实际不符，会导致成本被高估）。
+    兼容既有调用方传入显式费率（测试/回测脚本）。"""
+    if commission_rate is None:
+        commission_rate = STOCK_COMMISSION_RATE
+    if commission_min is None:
+        commission_min = STOCK_COMMISSION_MIN
+    if transfer_fee_rate is None:
+        transfer_fee_rate = STOCK_TRANSFER_FEE_RATE
+    amount = volume * price
+    commission = max(amount * commission_rate, commission_min)
+    transfer = amount * transfer_fee_rate
+    return amount + commission + transfer
+
+
+def should_take_profit(state, price, params=PARAMS):
+    if state["position_shares"] <= 0 or state["total_cost"] <= 0:
+        return False, ""
+    # AUD58(2026-10-14 第十二轮零预设独立审计·用户拍板方案A落地)：与 sell_all R1 统一口径——
+    # 按最保守成交价(卖出挂单价=现价×(1-卖出滑点0.003))计算净到手盈亏。
+    # 修复前双口径矛盾：should_tp 用「现价」算 pnl_pct（浮盈+0.1% 就判定「该卖」），
+    # 但 sell_all R1 用「保守成交价」算净到手（-0.126% 拦截）。结果浮盈 0~0.3% 临界区
+    # 策略反复「想卖没卖成」，日志刷屏。铁律零触碰，但口径不一致。
+    # 修复后：判定门槛与成交门槛完全对齐，策略只会在「按最差成交价扣费后仍赚钱」时才
+    # 触发卖出，铁律更严格守住；临界区不再出现「想卖没卖成」的尴尬日志。
+    _ref_px_tp = round(price * (1 - LIMIT_SLIP_PCT_SELL), 2) if PRICE_TYPE == 11 else price
+    if _ref_px_tp <= 0:
+        _ref_px_tp = price
+    mv = state["position_shares"] * _ref_px_tp
+# 净盈利口径：卖出侧费用(印花0.05%+佣金万0.841最低5元+过户费0.001%)从市值扣除，阈值判定与实盘净到手一致
+    # B2 修复(2026-10-08)：补扣卖出过户费(mv*0.00001)，与买入侧 compute_buy_cost 同一费率口径
+    sell_comm = max(mv * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN)
+    sell_stamp = mv * STOCK_STAMP_TAX_RATE
+    sell_transfer = mv * STOCK_TRANSFER_FEE_RATE
+    net_mv = mv - sell_comm - sell_stamp - sell_transfer
+    pnl_pct = (net_mv - state["total_cost"]) / state["total_cost"]
+    tp_mode = params.get("take_profit_mode", "both")
+    if tp_mode in ("fixed", "both"):
+        tp_pct = params["take_profit_pct"]
+        if pnl_pct >= tp_pct:
+            return True, "固定止盈+%.0f%%(浮盈%.1f%%)" % (tp_pct * 100, pnl_pct * 100)
+    if tp_mode in ("trailing", "both"):
+        ts_activate = params.get("trailing_activate_pct", 0.03)
+        ts_dd = params.get("trailing_dd_pct", 0.02)
+        # AUD57(2026-10-14)：修复移动止盈失效缺陷——原实现把 pnl_pct >= ts_activate 作为
+        # 前置门槛锁死 peak 更新与回撤判定：浮盈一旦跌破激活线就永久退出移动止盈判断，
+        # peak 被冻结在最高点，但回撤触发条件永不进入，利润可从高点一路回吐到 0 甚至
+        # 亏损都不卖（移动止盈形同虚设，实际只剩固定止盈单一路径出场）。
+        # 现改为两段式：peak 仅在「浮盈>=激活线 且 创新高」时更新（记录真实高点）；
+        # 一旦 peak 已激活(>0)，后续回撤判定不再回看激活线，直接从 peak 回落>=ts_dd
+        # 且净到手仍>成本 即触发卖出。
+        # 铁律零触碰：仍要求 pnl_pct >= 0（扣费后赚钱才卖），亏损卖出依旧被拦截。
+        if ts_dd > 0:
+            if pnl_pct >= ts_activate and price > state["trailing_peak"]:
+                state["trailing_peak"] = price
+            if state["trailing_peak"] > 0:
+                drawdown_from_peak = (state["trailing_peak"] - price) / state["trailing_peak"]
+                # R1亏损不卖兜底（对齐 strategy_core.should_take_profit）
+                if drawdown_from_peak >= ts_dd and pnl_pct >= 0:
+                    return True, "移动止盈(最高%.2f->现价%.2f回落%.1f%%)" % (
+                        state["trailing_peak"], price, drawdown_from_peak * 100)
+    return False, ""
+
+
+_CIRCUIT_LOG_TS = {"ts": 0.0}     # 躺平/硬止损日志节流时间戳（2026-09-24）
+
+
+def _log_circuit_throttled(gap=60.0):
+    """躺平/硬止损日志节流（2026-09-24 P0-2）。
+    QMT 启动与历史回放会高频回调 handlebar（实测 1 秒内数十次），而躺平状态会持续
+    数小时，逐次打印会把日志刷屏并拖慢策略。规则：刚进入躺平立即打印一条；持续
+    躺平期间每 gap 秒最多一条。退出躺平（ctrl != CIRCUIT）即清零时间戳，下次进入立刻可见。"""
+    t = time.time()
+    if t - _CIRCUIT_LOG_TS["ts"] < gap:
+        return False
+    _CIRCUIT_LOG_TS["ts"] = t
+    return True
+
+
+def update_peak_and_check_circuit(state, equity, params=PARAMS):
+    """更新 peak_equity，判定是否触发躺平（多头回撤过高）。
+    [R2修复] 熔断暂停后不因回撤减小自动解除；仅止盈全平或人工介入可解除。"""
+    max_dd = params["max_drawdown_pct"]
+    if equity > state["peak_equity"]:
+        state["peak_equity"] = equity
+    if state["peak_equity"] <= 0:
+        return ""
+    dd = (state["peak_equity"] - equity) / state["peak_equity"]
+    # 人工介入解除（manual_resume 置 True 后）
+    if state.get("paused") and state.get("manual_resume"):
+        state["paused"] = False
+        state["manual_resume"] = False
+        state["peak_equity"] = equity
+    if max_dd is not None and dd >= max_dd:
+        if not state.get("paused"):
+            state["paused"] = True
+        return "CIRCUIT"
+    return ""
+
+
+def check_hard_stop(state, equity, params=PARAMS):
+    hd = params.get("hard_stop_dd_pct")
+    if hd is None:
+        return False
+    init_cap = params["init_capital"]
+    if init_cap <= 0:
+        return False
+    total_dd = (init_cap - equity) / init_cap
+    if total_dd >= hd:
+        state["hard_stopped"] = True
+        state["paused"] = True
+        return True
+    return False
+
+
+def check_stop_loss_alert(state, equity, closes, price=0.0, params=PARAMS):
+    sl_pct = params.get("stop_loss_pct")
+    if sl_pct is None:
+        return False, None
+    # AUD36(2026-10-08 第四轮零预设独立审计)：移除 stop_loss_pending 短路——原实现下告警标记
+    # 被主流程 else 分支每根 bar 无条件复位，导致回撤持续期间每根 bar 重复告警/重复发 webhook
+    # 刷屏。现改为始终计算真实条件，由主流程负责「已告警则不重复输出、价格回升后复位」。
+    if state["position_shares"] <= 0 or state["hard_stopped"]:
+        return False, None
+    if is_bull_market(closes):
+        return False, None
+    if state["peak_equity"] <= 0:
+        return False, None
+    dd = (state["peak_equity"] - equity) / state["peak_equity"]
+    # AUD33(2026-10-08 零预设独立审计)：原口径按「独立额度净值」回撤判定，轻仓时股价跌幅
+    # 需显著大于阈值才触发（半仓时跌约12%才触6%告警），告警灵敏度随仓位漂移。现追加
+    # 「持仓浮亏幅度」口径（现价相对持仓成本），二者任一达标即告警。仍仅告警不卖出，
+    # 「坚决不止损、不赚钱不卖」铁律不受影响。
+    loss_pct = 0.0
+    _mv_sl = 0.0
+    # AUD34(2026-10-08 第二轮零预设审计)：浮亏市值优先用实时价（调用方传入），实时价不可用
+    # 时回退最近已收盘末根——原固定用已收盘末根(盘中实为昨收)致告警灵敏度滞后一天。
+    _px_sl = price if price and price > 0 else (float(closes[-1]) if closes and closes[-1] and closes[-1] > 0 else 0.0)
+    if _px_sl > 0:
+        _mv_sl = state["position_shares"] * _px_sl
+    if state["total_cost"] > 0 and _mv_sl > 0:
+        loss_pct = (state["total_cost"] - _mv_sl) / state["total_cost"]
+    if dd < sl_pct and loss_pct < sl_pct:
+        return False, None
+    # 估亏口径：按「持仓市值 - 持仓成本」计算浮动盈亏（负值=浮亏），
+    # 不可用 equity-total_cost（equity 含现金，量纲错误会把浮亏显示成盈利）
+    # AUD34：估亏口径与浮亏口径统一（优先实时价，不可用回退已收盘末根）
+    last_close = _px_sl if _px_sl > 0 else 0.0
+    mv_est = state["position_shares"] * last_close
+    alert = {
+        "peak_equity": state["peak_equity"],
+        "current_equity": equity,
+        "drawdown_pct": dd,
+        "loss_pct": loss_pct,
+        "threshold_pct": sl_pct,
+        "position_shares": state["position_shares"],
+        "total_cost": state["total_cost"],
+        "loss_amount": mv_est - state["total_cost"] if state["total_cost"] > 0 else 0.0,
+        "market": "熊市(MA20<MA60)",
+        "status": "待处理",     # M5修复(2026-08-28)：对齐 strategy_core 单一真源口径（原缺失该字段）
+    }
+    return True, alert
+
+
+def can_invest(cap, deployed, buy_amount):
+    # AUD33(2026-10-08 零预设独立审计)：max_position_pct 由「死参数」转正为 can_invest 硬上限——
+    # 单标的投入(含费 deployed+本次)不得超过 cap×max_position_pct。当前值 0.90 与 pyramid
+    # 隐含上限一致，不改变现有加仓行为；修改本值即可整体调节单标的仓位上限。
+    # AUD36(2026-10-08 第四轮零预设独立审计)：修正 AUD33 引入的致命缺陷——原写法直接引用
+    # 全局名 max_position_pct，而该值只存在于参数表 PARAMS 中、模块级无此定义，函数一被调用
+    # 即抛 NameError 并被 handlebar 逐标的异常处理吞掉，导致首仓/续批/金字塔加仓M2/盘中阶梯
+    # 加仓M3 全部买入通道在下单前被永久堵死（策略永远无法买入）。改为从参数表读取，数值仍为
+    # 0.90，策略行为完全不变。
+    # AUD68(2026-10-16)：硬顶留 300 元费用缓冲——deployed 为含费口径(compute_buy_cost)，而
+    # buy_amount 为不含费金额，直接相加会在金字塔满档前把最后一档顶掉：20万×0.9=18万 满档
+    # 含费约 180,049 元 > 18万，第4档(5%)永不成交、实际封顶约85%。缓冲为四档全部费用
+    # （约50元量级）的6倍余量；绝对上限仍受 buy_shares 内资金口径闸门与 cap 约束，
+    # 不会突破单标的预算。
+    _hard = cap * PARAMS["max_position_pct"] + 300.0
+    if deployed + buy_amount > _hard + 1e-6:
+        return False, ("已达单标的持仓上限 %.0f 元(上限比例%.0f%%，已部署 %.0f + 本次 %.0f)，停止追加"
+                       % (_hard, PARAMS["max_position_pct"] * 100, deployed, buy_amount))
+    return True, "OK"
+
+
+# ---------------------------------------------------------------------------
+# 7. 持仓状态（持久化到 JSON，重启可恢复）
+# ---------------------------------------------------------------------------
+def new_state():
+    return {
+        "position_shares": 0, "expected_shares": 0, "total_cost": 0.0,
+        "deployed": 0.0, "tier": -1, "last_add_price": 0.0,
+        "peak_equity": 0.0, "tier_base_price": 0.0, "trailing_peak": 0.0,
+        "paused": False, "hard_stopped": False, "stop_loss_pending": False,
+        "first_reason": "",
+        "limit_sell_date": "",   # P3-14(2026-10-01)：涨停卖出日期(YYYY-MM-DD)；当日该标的不再买入
+        "firstpos_date": "",     # 最近首仓评估日期(1.3)：随状态落盘，重启不重复评估
+        "stop_cooldown_until": "",   # P0/O1 卖出冷却截止日(YYYY-MM-DD)；空=不在冷却期
+        "sell_pending_until": 0.0,   # R-C：止盈卖出在途截止时间戳；>now 时冻结 M2/M3 加仓（随状态落盘，重启不丢）
+        # v9 入场优化：首仓分批记账（随状态落盘，重启不丢）。
+        # 刻意不纳入 _sync_state_to_actual 的保留名单：被重置即清空，最坏结果是当日不再
+        # 续批（踏空），而不会在状态漂移时重复下单——安全优先。
+        "first_batch_n": 0,          # 当日已下首仓批次数(0~SPLIT_MAX_BATCH)
+        "first_batch_px": 0.0,       # 第 1 批下单价（续批价格上限基准）
+        "first_batch_ts": 0.0,       # 第 1 批下单时间戳（批间间隔基准）
+        "first_batch_amt": 0.0,      # 首仓计划总额(= capital_cap * pyramid[0])
+        "first_batch_date": "",      # AUD37(2026-10-08 第五轮零预设独立审计)：首仓第 1 批成交日期(YYYY-MM-DD)
+        #   续批仅允许首仓当日执行，跨日后剩余批次作废（防「隔日续批」）；随状态落盘，重启不丢
+    }
+
+
+# ---- 状态回读通道（2026-09-24 21:07 现场实证；21:23 第三轮突围）----------------
+# QMT 沙箱对「已存在文件」的 open() 连【读】都拦（IO能力自检 读取已存在=FAIL）。
+# 21:23 日志进一步实证 os.open 低层 fd 通道也被拦（读已存在(fd)=FAIL，
+# os.open:Forbidden to open ...）。关键推断：Foribdden FileIO 是 Python 层自造异常，
+# 说明拦截是对 builtins.open / os.open 打的补丁，而非系统级驱动 ——
+# 那么绕开 Python 层的通道就有机会放行：
+#   通道4  ctypes 直调 Win32 CreateFileW/ReadFile   （首选，二进制安全、无子进程开销）
+#   通道5  subprocess 外部进程 cmd /c type          （末选，慢且受控制台代码页影响）
+# 读取链：open → os.open → ctypes Win32 → subprocess，任一成功即返回。
+_LS_STATUS = {"state": "", "m3": ""}
+
+
+def _win32_read_bytes(path, max_bytes=4194304, tail_bytes=0):
+    """ctypes 直调 kernel32 读文件，完全绕开 Python 层的 open/os.open 沙箱补丁。
+
+    tail_bytes>0 时只读文件末尾（用 SetFilePointerEx 定位），供框架日志（可达数十 MB）
+    取尾部用。返回 (bytes, err)；err 为空串表示成功。
+    """
+    try:
+        import ctypes
+    except Exception as _e:
+        return None, "ctypes不可用:%s" % _e
+    try:
+        _k32 = ctypes.windll.kernel32
+    except Exception as _e:
+        return None, "kernel32不可用:%s" % _e
+    _INVALID = ctypes.c_void_p(-1).value
+    _k32.CreateFileW.restype = ctypes.c_void_p
+    _k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+                                 ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+                                 ctypes.c_void_p]
+    # GENERIC_READ=0x80000000；share=READ|WRITE|DELETE=7；OPEN_EXISTING=3
+    _h = _k32.CreateFileW(path, 0x80000000, 7, None, 3, 0, None)
+    if (not _h) or (_h == _INVALID):
+        return None, "CreateFileW被拒(GetLastError=%s)" % _k32.GetLastError()
+    _chunks = []
+    try:
+        _want = max_bytes if tail_bytes <= 0 else min(max_bytes, tail_bytes)
+        if tail_bytes > 0:
+            _k32.GetFileSizeEx.restype = ctypes.c_int
+            _k32.GetFileSizeEx.argtypes = [ctypes.c_void_p,
+                                           ctypes.POINTER(ctypes.c_int64)]
+            _sz = ctypes.c_int64(0)
+            if _k32.GetFileSizeEx(_h, ctypes.byref(_sz)) and _sz.value > _want:
+                _k32.SetFilePointerEx.restype = ctypes.c_int
+                _k32.SetFilePointerEx.argtypes = [ctypes.c_void_p, ctypes.c_int64,
+                                                  ctypes.POINTER(ctypes.c_int64),
+                                                  ctypes.c_uint32]
+                _new = ctypes.c_int64(0)
+                # FILE_BEGIN=0
+                if not _k32.SetFilePointerEx(_h, ctypes.c_int64(_sz.value - _want),
+                                             ctypes.byref(_new), 0):
+                    return None, "SetFilePointerEx失败(GetLastError=%s)" % _k32.GetLastError()
+        _k32.ReadFile.restype = ctypes.c_int
+        _k32.ReadFile.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
+                                  ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+        _total = 0
+        while _total < _want:
+            _buf = ctypes.create_string_buffer(65536)
+            _n = ctypes.c_uint32(0)
+            if not _k32.ReadFile(_h, _buf, 65536, ctypes.byref(_n), None):
+                return None, "ReadFile失败(GetLastError=%s)" % _k32.GetLastError()
+            if _n.value == 0:
+                break                               # EOF
+            _chunks.append(_buf.raw[:_n.value])
+            _total += _n.value
+        return b"".join(_chunks), ""
+    finally:
+        _k32.CloseHandle(_h)
+
+
+def _subproc_read_bytes(path, max_bytes=4194304):
+    # AUD41：本函数恒返回失败（QMT 内置 Python 中会阻塞主线程，已主动禁用）；形参 max_bytes 不再使用，仅保留签名兼容。
+    """[QMT 环境安全禁用] 原实现用 subprocess.run(["cmd","/d","/c","type",path])
+    作为文件读取的第四级兜底通道。在 QMT 内置 Python 3.6 (bin.x64/python36.zip)
+    中该调用会永久阻塞：
+        subprocess.py:405 communicate -> 843 _communicate -> 1092 stdout_thread.join
+        -> threading.py:1060 _wait_for_tstate_lock -> 1072 lock.acquire
+    阻塞期间 QMT 主线程无法响应，QMT 判定策略无响应并强制停止
+    (KeyboardInterrupt: 策略被手动停止)，随后 startupAutorun 又把策略拉起，
+    形成「启动 -> 卡死 -> 被强杀 -> 自动重启」的无限循环。
+
+    现直接返回失败，让 _read_file_bytes 走正常降级路径（调用方均有容错）。
+    返回 (bytes, err)。
+    """
+    return None, "subprocess通道已禁用(QMT内会阻塞主线程)"
+
+
+def _read_file_bytes(path, max_bytes=4194304):
+    """读整个文件，返回 (bytes, err)。三级通道链，任一成功即返回：
+    open() → os.open/os.read → ctypes Win32。（subprocess 通道已按 QMT 环境安全禁用）
+    全部失败返回 (None, "open:.. | os.open:.. | ctypes:.. | sub:..")。
+    """
+    _errs = []
+    try:
+        with open(path, "rb") as _f:
+            return _f.read(), ""
+    except Exception as _e:
+        _errs.append("open:%s" % _e)
+    _fd = None
+    try:
+        _fd = os.open(path, os.O_RDONLY)
+        _chunks = []
+        _total = 0
+        while True:
+            _b = os.read(_fd, 65536)
+            if not _b:
+                break
+            _total += len(_b)
+            if _total > max_bytes:
+                break
+            _chunks.append(_b)
+        return b"".join(_chunks), ""
+    except Exception as _e:
+        _errs.append("os.open:%s" % _e)
+    finally:
+        if _fd is not None:
+            try:
+                os.close(_fd)
+            except OSError:
+                pass
+    _b, _e = _win32_read_bytes(path, max_bytes)
+    if _b is not None:
+        return _b, ""
+    _errs.append("ctypes:%s" % _e)
+    _b, _e = _subproc_read_bytes(path, max_bytes)
+    if _b is not None:
+        return _b, ""
+    _errs.append("sub:%s" % _e)
+    return None, " | ".join(_errs)
+
+
+def _read_file_tail(path, nbytes=524288):
+    """读文件末尾 nbytes 字节，返回 (bytes, err)。供框架日志（大文件）探测用。"""
+    try:
+        with open(path, "rb") as _f:
+            try:
+                _f.seek(-nbytes, os.SEEK_END)
+            except Exception:
+                _f.seek(0)
+            return _f.read(), ""
+    except Exception:
+        pass
+    _b, _e = _win32_read_bytes(path, nbytes, tail_bytes=nbytes)
+    if _b is not None:
+        return _b, ""
+    _b, _e2 = _subproc_read_bytes(path, nbytes)
+    if _b is not None:
+        return _b, ""
+    return None, "%s | sub:%s" % (_e, _e2)
+
+
+def load_state(code):
+    _had = True
+    try:
+        _had = os.path.exists(STATE_FILE)
+    except Exception:
+        pass
+    if not _had:
+        _LS_STATUS["state"] = "no-file"
+        return new_state()
+    _blob, _err = _read_file_bytes(STATE_FILE)
+    if _blob is None:
+        _LS_STATUS["state"] = "read-failed(%s)" % _err
+        return new_state()
+    try:
+        all_s = json.loads(_blob.decode("utf-8"))
+    except Exception as _e:
+        _LS_STATUS["state"] = "parse-failed(%s)" % _e
+        all_s = {}
+    d = all_s.get(code) if isinstance(all_s, dict) else None
+    s = new_state()
+    if isinstance(d, dict):
+        s.update(d)
+        _LS_STATUS["state"] = "loaded"
+    elif _LS_STATUS["state"] == "":
+        _LS_STATUS["state"] = "no-bucket"
+    return s
+
+
+# ---- 落盘失败节流告警（2026-09-29 审计修复 M2）----
+# 此前 save_state/save_m3 的 except 静默吞异常：状态写盘失败没有任何痕迹，
+# 崩溃重启后状态归零（可致重复开仓）/ 当日加仓额度丢失，事后完全无从排查。
+_SAVE_FAIL_TS = {}              # 通道名 -> 上次告警时间戳
+_SAVE_FAIL_ALERT_GAP = 300.0    # 同一通道落盘失败告警最小间隔（秒）
+
+
+def _save_fail_alert(tag, path, err):
+    """落盘失败节流告警：同一通道 300s 内只告警一次，避免每 bar 刷屏。
+    P0-1 修复(2026-10-01)：文案升级为明确处置指引（原先只说"可致重复开仓"，
+    不告诉用户该做什么）。"""
+    _now = time.time()
+    if _now - _SAVE_FAIL_TS.get(tag, 0.0) >= _SAVE_FAIL_ALERT_GAP:
+        _SAVE_FAIL_TS[tag] = _now
+        try:
+            log("【落盘失败】%s 写入 %s 异常: %s —— 交易状态未持久化。\n"
+                "处置指引：① 本策略已进入「持久化降级」保护态，期间不再开新首仓"
+                "（止盈/卖出不受限）；② 请人工核对当前是否有在途委托与实际持仓；"
+                "③ 核实后重启模型恢复（重启后以券商委托/持仓为准重建台账）。"
+                % (tag, os.path.basename(path), err))
+            _notify_risk("persist_fail", "%s 写入 %s 失败: %s"
+                         % (tag, os.path.basename(path), err))
+        except Exception:
+            pass
+
+
+# ---- AUD4 修复(2026-10-03)：外部通知钩子（本轮审计编号 AUD1-AUD11，与母版既有 P0/P1/P2/P3 里程碑编号不冲突）----
+# 风险事件（落盘失败/台账重建熔断/涨跌停价停摆/下单失败聚合）除写策略日志外，
+# 还要本地落盘一条结构化事件（gf_risk_events.log，读合并追加写，兼容 QMT 沙箱
+# 禁写已存在文件的约束），并在设置环境变量 GF_RISK_WEBHOOK_URL 时 POST 到外部端点
+#（失败静默，不阻塞主流程）。
+RISK_EVENT_LOG = os.path.join(_BASE_DIR, "gf_risk_events.log")
+
+def _notify_risk(evt_type, msg):
+    """风险事件通知：本地追加写 gf_risk_events.log + 可选 webhook POST（失败静默）。"""
+    try:
+        _line = json.dumps({"ts": time.time(), "type": evt_type, "msg": msg},
+ensure_ascii=False).encode("utf-8") + b"\n"
+        def _wr(fp):
+            _blob, _err = _read_file_bytes(RISK_EVENT_LOG)
+            _prev = (b"" if not _blob else _blob)
+            fp.write(_prev + _line)
+        _lock_and_write(RISK_EVENT_LOG, _wr)
+        _mirror_copy("gf_risk_events.log")   # AUD38：镜像同步到广发 QMT 目录
+    except Exception:
+        pass
+    _url = os.environ.get("GF_RISK_WEBHOOK_URL", "").strip()
+    if _url:
+        try:
+            import urllib.request
+            _req = urllib.request.Request(
+                _url, data=json.dumps({"ts": time.time(), "type": evt_type, "msg": msg},
+                                      ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(_req, timeout=3)
+        except Exception:
+            pass
+
+
+# P0-1 修复(2026-10-01)：持久化健康标志——save_state 失败即置 False 并阻断**新首仓**
+# （加仓/止盈/卖出不受限：止盈必须始终可执行）。此前落盘失败只告警不阻断，
+# 状态丢失 + 重启 = 内存在途台账归零 + 状态文件仍旧 → 重复开首仓（对抗测试 C 组复现）。
+# 该标志为模块级（不随 STATE.clear()/重置丢失）；写入恢复成功即自动复位 True。
+_STATE_PERSIST_OK = True
+_STATE_WRITTEN = {}       # AUD68：code -> 上次成功落盘的状态 JSON 文本（内容未变则跳过写盘+镜像）
+
+# AUD1 修复(2026-10-03)：M3 台账持久化健康标志——save_m3 失败即置 False 并阻断 M2/M3 加仓
+#（M3 台账含当日加仓额度 used/m2_used，落盘失败后重启额度重新放开可致超额度加仓；
+#  与 _STATE_PERSIST_OK 同构，写入恢复成功自动复位 True）。
+_M3_PERSIST_OK = True
+
+
+def save_state(code, state):
+    """加锁 + 原子写入：合并分桶保存，避免人工写入 manual_resume 与下 bar 写回竞态。
+    2026-09-29 审计修复 M2：写入失败改为节流告警（此前静默吞异常，崩溃丢状态无从排查）。
+    P0-1 修复(2026-10-01)：返回写入是否成功，并联动 _STATE_PERSIST_OK 阻断新首仓。
+    AUD68(2026-10-16)：内容与上次成功落盘一致时跳过写盘+镜像——handlebar 按分笔（约3秒）
+    触发，原实现每根 bar 都全量重写状态文件并镜像复制一次，单线程下 I/O 冗余明显；
+    进程重启后首次保存必然落写（内存无上次记录），持久化语义不变。"""
+    global _STATE_PERSIST_OK
+    try:
+        _js_holder = {}
+        def _w(fp):
+            # 合并读必须走 _read_file_bytes：QMT 沙箱拦 open() 读已存在文件（2026-09-24 实证），
+            # 否则每次保存都把其它标的的分桶整个覆盖丢掉。
+            _blob, _err = _read_file_bytes(STATE_FILE)
+            all_s = {}
+            if _blob:
+                try:
+                    all_s = json.loads(_blob.decode("utf-8"))
+                except Exception:
+                    all_s = {}
+            if not isinstance(all_s, dict):
+                all_s = {}
+            # 仅保留策略白名单内标的的分桶，过滤掉非策略交易标的的残留数据
+            all_s = {k: v for k, v in all_s.items() if _is_strategy_stock(k)}
+            all_s[code] = state
+            _js = json.dumps(all_s, ensure_ascii=False, indent=2)
+            if _STATE_WRITTEN.get(code) == _js:
+                _js_holder["skip"] = True
+                return          # 内容未变：跳过写盘（镜像副本内容亦相同）
+            fp.write(_js.encode("utf-8"))
+            _js_holder["js"] = _js
+        _lock_and_write(STATE_FILE, _w)
+        if _js_holder.get("skip"):
+            _STATE_PERSIST_OK = True
+            return True
+        if _js_holder.get("js") is not None:
+            _STATE_WRITTEN[code] = _js_holder["js"]   # 仅写盘成功后才记录；失败则下根 bar 自然重试
+        _mirror_copy("gf_native_multi_state.json")   # AUD38：镜像同步到广发 QMT 目录
+        if not _STATE_PERSIST_OK:
+            log("【持久化恢复】状态写入成功，退出「持久化降级」保护态，恢复首仓能力")
+            # 2026-10-08 防刷屏：“状态文件已写出”仅在持久化从失败恢复成功时打一次，平时每根 bar 写入成功不再重复报（仅影响日志，不改变任何交易判断）
+            log("状态文件已写出 | 绝对路径=%s" % os.path.abspath(STATE_FILE))
+        _STATE_PERSIST_OK = True
+        return True
+    except Exception as _e:
+        _save_fail_alert("save_state", STATE_FILE, _e)
+        _STATE_PERSIST_OK = False
+        return False
+
+
+def load_m3(code):
+    _had = True
+    try:
+        _had = os.path.exists(M3_STATE_FILE)
+    except Exception:
+        pass
+    if not _had:
+        _LS_STATUS["m3"] = "no-file"
+        return {"date": "", "triggered": [], "used": 0.0, "m2_used": 0.0}
+    _blob, _err = _read_file_bytes(M3_STATE_FILE)
+    if _blob is None:
+        _LS_STATUS["m3"] = "read-failed(%s)" % _err
+        return {"date": "", "triggered": [], "used": 0.0, "m2_used": 0.0}
+    try:
+        all_m = json.loads(_blob.decode("utf-8"))
+    except Exception:
+        all_m = {}
+    d = all_m.get(code) if isinstance(all_m, dict) else None
+    if isinstance(d, dict):
+        if "m2_used" not in d:
+            d["m2_used"] = 0.0
+        _LS_STATUS["m3"] = "loaded"
+        return d
+    if _LS_STATUS["m3"] == "":
+        _LS_STATUS["m3"] = "no-bucket"
+    return {"date": "", "triggered": [], "used": 0.0, "m2_used": 0.0}
+
+
+def save_m3(code, m3):
+    """加锁 + 原子写入（轻微3 修复）。
+    2026-09-29 审计修复 M2：写入失败改为节流告警（此前静默吞异常，当日加仓额度丢失无从排查）。
+    AUD1 修复(2026-10-03)：返回写入是否成功，并联动 _M3_PERSIST_OK 阻断 M2/M3 加仓
+    （与 save_state/_STATE_PERSIST_OK 同构；M3 台账丢失重启后当日额度重新放开，
+     可致超额度加仓，故落盘失败须熔断，恢复成功后自动解除）。"""
+    global _M3_PERSIST_OK
+    try:
+        def _w(fp):
+            # 合并读必须走 _read_file_bytes（同 save_state 注释）。
+            _blob, _err = _read_file_bytes(M3_STATE_FILE)
+            all_m = {}
+            if _blob:
+                try:
+                    all_m = json.loads(_blob.decode("utf-8"))
+                except Exception:
+                    all_m = {}
+            if not isinstance(all_m, dict):
+                all_m = {}
+            # 仅保留策略白名单内标的的分桶，过滤掉非策略交易标的的残留数据
+            all_m = {k: v for k, v in all_m.items() if _is_strategy_stock(k)}
+            all_m[code] = m3
+            fp.write(json.dumps(all_m, ensure_ascii=False, indent=2).encode("utf-8"))
+        _lock_and_write(M3_STATE_FILE, _w)
+        _mirror_copy("gf_native_multi_m3.json")   # AUD38：镜像同步到广发 QMT 目录
+        if not _M3_PERSIST_OK:
+            log("【M3台账持久化恢复】写入成功，退出熔断保护态，恢复 M2/M3 加仓")
+            # AUD34(2026-10-08 第二轮零预设审计)：对齐 save_state——「已写出」仅在从熔断恢复
+            # 成功时打印一次，平时每次加仓落盘不再重复刷屏（与 save_state 恢复日志对称）。
+            log("M3台账已写出 | 绝对路径=%s" % os.path.abspath(M3_STATE_FILE))
+        _M3_PERSIST_OK = True
+        return True
+    except Exception as _e:
+        _save_fail_alert("save_m3", M3_STATE_FILE, _e)
+        _M3_PERSIST_OK = False
+        return False
+
+
+def get_daily_ledger(code):
+    """当日加仓台账（P0/O2：M2金字塔 + M3盘中 共享单日额度）。
+    返回 (m3, today)：m3 = {"date","triggered","used","m2_used"}，
+    used = M3当日已用金额，m2_used = M2当日已用金额；跨日自动重置。
+    """
+    m3 = load_m3(code)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if m3.get("date") != today:
+        m3 = {"date": today, "triggered": [], "used": 0.0, "m2_used": 0.0}
+    if "m2_used" not in m3:          # 兼容旧台账文件
+        m3["m2_used"] = 0.0
+    return m3, today
+
+
+# ---- P0/O1 卖出冷却 ----
+def cooldown_deadline():
+    """卖出冷却截止日：卖出当日 + STOP_COOLDOWN_DAYS 个自然日（YYYY-MM-DD）。
+    与 miniQMT 版 STOP_COOLDOWN_DAYS=3 语义一致（datetime 自然日比较）。"""
+    from datetime import timedelta
+    return (datetime.now() + timedelta(days=STOP_COOLDOWN_DAYS)).strftime("%Y-%m-%d")
+
+
+def in_cooldown(state):
+    """是否处于卖出冷却期（冷却期内禁止开首仓，加仓不受限）。"""
+    until = (state or {}).get("stop_cooldown_until") or ""
+    # F-5(2026-10-17) 第十三轮独立审计·用户拍板落地：防御性类型检查。
+    # stop_cooldown_until 应为字符串(YYYY-MM-DD)或空串；如果某次手动修改存了非零数字/浮点，
+    # 原 (or "") 只对 falsy 值兜底，非零数字会绕过并直接传进字符串比较抛 TypeError。
+    # 非字符串视为空串 -> 不在冷却期（保守、不会误开仓）。
+    if not isinstance(until, str):
+        return False
+    if not until:
+        return False
+    return datetime.now().strftime("%Y-%m-%d") <= until
+
+
+# ---------------------------------------------------------------------------
+# 8. 交易执行（QMT 原生框架 passorder）
+# ---------------------------------------------------------------------------
+def resolve_account(C, code=""):  # AUD34(2026-10-08 第二轮零预设审计)：可选形参 code，回退留痕不再引用未定义变量（init 路径调用曾致 NameError 中断整个启动自检链）
+    """账号由模型交易界面注入为全局 account 变量（广发 QMT 的 __PyContext 无 account 属性）。"""
+    acct = None
+    try:
+        acct = account          # QMT 框架注入的全局变量（模型交易界面选账号时自动注入）
+    except NameError:
+        acct = None
+    if not acct:
+        try:
+            acct = C.account    # 某些 QMT 版本可能挂在 C 上（广发版实测无此属性）
+        except Exception:
+            acct = None
+    if not acct:
+        # AUD25(2026-10-07 铁律审计)：账户回退到硬编码默认值必须留痕，不能静默
+        # AUD35(2026-10-08 第三轮零预设审计·用户拍板)：日志账号号打码显示，内部仍用完整账号下单
+        _mask_acct = (DEFAULT_ACCT[:3] + "****") if len(DEFAULT_ACCT) >= 4 else DEFAULT_ACCT
+        log("[%s] 警告：resolve_account 未能定位配置账户，回退到硬编码默认账号 %s，"
+            "请人工核对资金账号（静默回退会掩盖账号配置错误）" % (code or "(未知代码)", _mask_acct))
+        # AUD33(2026-10-08 零预设独立审计)：仅日志留痕不可靠（日志轮转/去重可能吞掉），
+        # 追加推送风险事件文件，确保账号配置错误进入 gf_risk_events.log 持久留痕。
+        _notify_risk("account_fallback",
+                     "%s 回退到硬编码默认账号 %s，请人工核对资金账号配置" % (code or "(未知代码)", DEFAULT_ACCT))
+        acct = DEFAULT_ACCT     # 最后兜底（8973786）
+    return acct
+
+
+# ---- innerApi 标准查询/行情适配层（2026-09-22，单标的/多标的两版共用）----
+# 不使用文档中不存在的 C.get_asset()/C.get_position()；查询走文档标准接口
+# get_trade_detail_data，行情走 C.get_full_tick/C.get_instrument_detail/
+# C.get_market_data_ex，下载走全局 download_history_data。
+_PENDING_BUYS = {}    # code -> 已提交、尚未体现在券商持仓中的买入股数（在途单）
+_PENDING_TS = {}      # code -> 最近一次在途买单提交时间戳（超时保护用）
+_PENDING_REBUILT = set()   # P0-1(2026-10-01)：已执行过券商口径台账重建的标的（每进程每标的一次）
+_DUP_LOG_TS = {}      # code -> 上次「防重复下单」告警时间戳（日志节流）
+_PENDING_TTL = 180.0  # 在途买单最长容忍秒数；超时后查委托确认，查不到活跃买单才清理
+_PENDING_TTL_FORCE = 0.0   # >0 时超时强制清理在途记录（默认 0=仅在委托查询确认后清理）
+_SELL_PENDING_TTL = 180.0   # R-C 修复(2026-09-28)：止盈卖出在途容忍窗口；期间冻结 M2/M3 加仓，卖出落账(actual==0)后自然失效
+_SELL_PEND_QUERY_FAIL = {}  # AUD33(2026-10-08)：code -> 卖出在途恢复时卖单状态查询连续失败次数（达3次按实际持仓兜底恢复）
+_DUP_LOG_GAP = 300.0  # 防重复下单告警节流间隔（秒）：原 60s 对 1分钟 bar 节流失效，改 300s（2026-10-08）
+# ---- 2026-09-24 13:03 实盘二次事故（模拟盘）修复 ----
+# 现象：13:00:02 买入4700 → 13:03:04 超时结算判"委托被拒" → 立即重置状态重开首仓
+#       买入4600 → 再次进入在途等待 → 循环。根因：模拟盘下委托查询返回空列表被
+#       当成"委托被拒/已终结"，而真实原因可能是查询账号/范围不对或委托仍存活。
+# 补三道闸（误保持只是暂缓买入；误结算=重复下单，永远取保守侧）：
+_SETTLE_REOPEN_COOLDOWN = 900.0   # 超时结算后禁止重开首仓的冷却秒数
+_SETTLE_FAIL_BREAKER = 3          # 连续超时结算达到该次数 → 熔断暂停买入（需人工解除）
+_SETTLE_COOLDOWN = {}             # code -> 结算后重开冷却截止时间戳
+_SETTLE_FAILS = {}                # code -> 连续超时结算次数（持仓追平后清零）
+_SETTLE_BREAKER = set()           # 已熔断的 code 集合
+_SETTLE_BREAKER_DATE = {}         # AUD33(2026-10-08)：code -> 熔断日期(YYYY-MM-DD)，跨日自动解除依据
+_LAST_SETTLE_TS = {}              # code -> 最近一次结算时间（外部清仓日志措辞用）
+_LAST_ORDER_QUERY = {"n": 0}      # has_live_buy_order 最近一次查询返回的账号委托总条数
+_HIST_DL_LAST = {}    # code -> 上次日线补下载时间戳（60s 冷却）
+_HIST_DL_DAY = {}     # code -> 补下载计数所属日期
+# F-3(2026-10-17) 第十三轮独立审计·用户拍板落地：补下载函数名字典查表。
+# 原实现: fn = eval(name)  +  except Exception: continue  +  fn(*args)
+# 新实现: 字典查表，函数名硬编码无注入面，纯粹提升代码质量。
+# 值由 init / handlebar 在每根 bar 开头注入（从 QMT 全局名字空间取函数引用）；
+# 未注入时 dict.get(name) 返回 None -> 跳过该名字，与原 except 行为一致。
+_DL_FUNCS = {
+    # key 名 -> 函数引用（运行时由 init 注入）
+    "download_history_data2": None,
+    "download_history_data": None,
+}
+_HIST_DL_CNT = {}     # code -> 当日补下载次数（上限 _HIST_DL_MAX）
+_HIST_DIAG = {}       # code -> 最近一次取数诊断摘要（各形态命中长度/异常）
+_HIST_ISSUE_TS = {}   # code -> 历史数据问题日志上次打印时间（60s 节流）
+_HIST_CACHE = {}      # code -> (ts, (closes, highs, lows, vols))  日线四字段缓存
+_CASH_CACHE = {}      # acct -> (ts, cash)                        可用资金缓存
+_LIMIT_CACHE = {}     # code -> (date, up, dn)                    当日涨跌停价缓存
+_LIMIT_WARN = {}      # code -> 涨跌停获取失败最近告警日期（防日志刷屏）
+_HIST_TTL = 30.0      # 日线缓存秒数（innerApi：行情调用避免高频，建议缓存结果）
+_HIST_FAIL_CACHE = {}  # P2-3(2026-10-01)：code -> 上次取数失败时间戳（DATA_GATE_FAIL_TTL 负缓存）
+_AVG_VOL20 = {}        # P3-6(2026-10-01)：code -> 近 20 根已收盘 bar 平均成交量（参与率闸门数据源）
+_PARTICIP_UNIT_ALERT = {}   # AUD55(2026-10-13)：code -> 上次已推送「参与率单位自检」告警的日期（每日一次，防刷屏）
+_PARTICIP_LOG_STATE = {}    # AUD63：参与率日志每日首次或数值显著变化才打印
+_PARTICIP_ZERO_ALERT = {}   # AUD56(2026-10-13)：code -> 上次已推送「近20日均量为0、跳过参与率闸门」告警的日期（每日一次）
+_CASH_TTL = 5.0       # 可用资金缓存秒数
+_HIST_DL_COOLDOWN = 60.0   # 日线补下载冷却秒数（异步落盘需时间，避免每 bar 重刷）
+_HIST_DL_MAX = 20          # 日线补下载每日上限（防无限刷接口）
+_HIST_ISSUE_GAP = 60.0     # 历史数据问题日志节流间隔（秒）
+_REBUILD_FAILS = {}          # AUD2(2026-10-03)：code -> 券商在途台账重建连续失败次数
+_REBUILD_RETRY_TS = {}       # AUD2(2026-10-03)：code -> 下次重建重试时间戳（60s 冷却）
+_REBUILD_BREAKER = set()     # AUD2(2026-10-03)：已熔断暂停买入的 code（委托查询连续失败）
+_REBUILD_MAX_FAILS = 3       # AUD2(2026-10-03)：连续失败达到该次数 -> 熔断暂停买入
+_REBUILD_COOLDOWN = 60.0     # AUD2(2026-10-03)：重建失败重试冷却秒数
+_TD_CACHE = {}               # AUD5(2026-10-03)：(acct,data_type) -> (ts, arr) 交易数据短缓存
+_TD_TTL = 3.0                # AUD5(2026-10-03)：持仓/委托/账户查询短缓存秒数
+_LIMIT_RETRY_TS = {}         # AUD6(2026-10-03)：code -> 涨跌停价失败下次重试时间戳（60s 冷却）
+_LIMIT_RETRY_GAP = 60.0      # AUD6(2026-10-03)：涨跌停价失败定时重试间隔秒数
+_LIMIT_STALL = {}            # AUD6(2026-10-03)：code -> 当日因涨跌停价失败进入停摆的日期
+_PARAM_FP = hashlib.sha256(  # AUD10(2026-10-03)：PARAMS 全量哈希前 12 位（参数版本指纹）
+    json.dumps(PARAMS, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+
+# ---------------------------------------------------------------------------
+# 日志净化 + 标的识别（2026-09-30）
+# 规则：
+#   1) 策略日志只呈现「策略交易标的」的买卖相关信息；账号内其他股票的持仓 /
+#      委托 / 行情，以及账号级盈利（平仓盈亏、手续费、保证金、信用等）数据，
+#      一律不得写入策略日志（见 account_diag 过滤）。
+#   2) 实际买入 / 卖出日志统一带「代码 名称」（如 "002142 宁波银行"），便于识别。
+#   3) 铁律：策略只允许交易 STRATEGY_STOCK_NAMES 内的标的；越界下单一律拦截，
+#      绝不下发任何非策略标的的委托（见 buy_shares / sell_all 入口守卫）。
+# ---------------------------------------------------------------------------
+# 策略交易标的清单（代码 -> 名称）。仅用于日志辨识与下单白名单。
+# 2026-09-30 铁律修复：白名单从 SYMBOLS 动态生成，确保与实际交易标的完全一致，
+# 杜绝白名单与交易标的漂移导致非策略标的误入的风险。
+_STRATEGY_STOCK_NAMES = {s["code"]: s["name"] for s in SYMBOLS}
+
+
+def _is_strategy_stock(code):
+    """铁律守卫：判定 code 是否为策略允许交易的标的（在白名单内）。"""
+    if not code:
+        return False
+    if code in _STRATEGY_STOCK_NAMES:
+        return True
+    base = code.split(".")[0] if "." in code else code
+    return base in _STRATEGY_STOCK_NAMES or any(
+        k.split(".")[0] == base for k in _STRATEGY_STOCK_NAMES)
+
+
+def _stock_name(code):
+    """代码(可带市场后缀) -> 名称；未知返回空串。"""
+    if not code:
+        return ""
+    nm = _STRATEGY_STOCK_NAMES.get(code)
+    if nm:
+        return nm
+    base = code.split(".")[0] if "." in code else code
+    return _STRATEGY_STOCK_NAMES.get(base, "")
+
+
+def _cn(code):
+    """日志展示名：'002142 宁波银行'；未知退化成纯代码。"""
+    if not code:
+        return "(未知)"
+    base = code.split(".")[0] if "." in code else code
+    nm = _stock_name(code)
+    return "%s %s" % (base, nm) if nm else base
+
+
+def _td_query(acct, data_type):
+    """get_trade_detail_data 大小写兼容查询（innerApi 文档页 'STOCK'/'ACCOUNT' 与
+    快速开始页 'stock'/'account' 大小写混用，先大写后小写双保险）。
+    返回 (ok, list)；ok=False 表示两种写法都失败。
+    AUD5 修复(2026-10-03)：3s 短缓存——同根 bar 内多次调用（持仓校验/委托重建/资金
+    闸门/下单前核验）命中缓存，减少对 innerApi 交易查询的高频请求；失败不缓存
+    （下根 bar 自动重试）。缓存数组仅供只读遍历，调用方不得修改元素。"""
+    _ck = (acct, data_type)
+    _ct = _TD_CACHE.get(_ck)
+    if _ct and time.time() - _ct[0] < _TD_TTL:
+        return True, _ct[1]
+    for at, dt in (("STOCK", data_type.upper()), ("stock", data_type.lower())):
+        try:
+            arr = get_trade_detail_data(acct, at, dt)
+        except Exception:
+            continue
+        if arr is None:
+            continue        # 该写法不可用/查询失败，试另一组
+        _TD_CACHE[_ck] = (time.time(), arr)
+        return True, arr
+    return False, []
+
+
+def get_cash_safe(C, acct):
+    """可用资金（innerApi: get_trade_detail_data(acct,'STOCK','ACCOUNT').m_dAvailable）。
+    5s 结果缓存（文档要求避免高频请求）；查询失败按 0 处理——0 现金会让买入金额
+    计算自然归零，安全拦截。查询成功但现金为 0 是有效值直接返回。
+    内置Python单线程：失败不 sleep 重试，下一根 bar 自动再查。"""
+    cached = _CASH_CACHE.get(acct)
+    if cached and time.time() - cached[0] < _CASH_TTL:
+        return cached[1]
+    ok, arr = _td_query(acct, "ACCOUNT")
+    cash = None
+    if ok and arr:
+        try:
+            v = getattr(arr[0], "m_dAvailable", None)
+            if v is None:
+                v = getattr(arr[0], "m_dCash", None)     # 个别版本字段名兜底
+            if v is not None:
+                cash = float(v)
+        except Exception:
+            cash = None
+    if cash is None:
+        log("可用资金查询失败(get_trade_detail_data)，按0处理（本根bar不买入）")
+        return 0.0
+    _CASH_CACHE[acct] = (time.time(), cash)
+    return cash
+
+
+def query_position_safe(C, acct, code):
+    """实时查询实际持仓（innerApi: get_trade_detail_data(acct,'STOCK','POSITION')，
+    按 m_strInstrumentID + '.' + m_strExchangeID 匹配标的）。返回 (ok, vol, avg_px, can_use)。
+    ok=False 表示查询失败——调用方必须中止下单；ok=True 且 vol=0 表示真空仓。
+    不可把查询失败当成 0 股：否则会被误判为"外部清仓"重置状态，进而双重买入。
+    成本价优先 m_dCostPrice、缺失兜底 m_dOpenPrice；m_nCanUseVolume 缺失退回总持仓。
+    内置Python单线程：失败不 sleep 重试，下一根 bar 自动再查。"""
+    ok, arr = _td_query(acct, "POSITION")
+    if not ok:
+        log("【持仓校验】%s 持仓查询失败(get_trade_detail_data)，中止下单" % code)
+        return False, 0, 0.0, 0
+    try:
+        for pos in arr:
+            pid = "%s.%s" % (getattr(pos, "m_strInstrumentID", "") or "",
+                             getattr(pos, "m_strExchangeID", "") or "")
+            if pid != code:
+                continue
+            vol = int(getattr(pos, "m_nVolume", 0) or 0)
+            avg = float(getattr(pos, "m_dCostPrice", 0.0) or 0.0)
+            if avg <= 0:
+                avg = float(getattr(pos, "m_dOpenPrice", 0.0) or 0.0)
+            cu = getattr(pos, "m_nCanUseVolume", None)
+            can_use = int(cu) if cu is not None else vol
+            return True, vol, avg, can_use
+        return True, 0, 0.0, 0        # 查询成功但账号内无该标的持仓 → 真空仓
+    except Exception as e:
+        log("【持仓校验】%s 持仓字段读取异常(%s)，中止下单" % (code, e))
+        return False, 0, 0.0, 0
+
+
+def _pending_add(code, vol):
+    """登记在途买单（已提交、尚未体现在券商持仓的股数）并打时间戳。
+    P0-1 修复(2026-10-01)：登记后立即落盘（PENDING_FILE 原子写）——
+    内存台账进程重启即归零，是「状态丢失 + 重启 = 重复开首仓」的组成部分。"""
+    v = int(vol)
+    if v <= 0:
+        return
+    _PENDING_BUYS[code] = _PENDING_BUYS.get(code, 0) + v
+    _PENDING_TS[code] = time.time()
+    _pending_save()
+
+
+def _pending_clear(code, why=""):
+    """清理在途买单记录。仅在「券商持仓已追平」或「委托查询确认无活跃买单」时调用；
+    绝不可在状态重置路径上无条件清零——那是 2026-09-24 重复下单事故的直接成因。"""
+    had = _PENDING_BUYS.pop(code, 0)
+    _PENDING_TS.pop(code, None)
+    if had:
+        _pending_save()
+    if had and why:
+        log("[%s] 在途买单记录已清理(%d股, %s)" % (code, had, why))
+
+
+# ---- P0-1 修复(2026-10-01)：在途买单台账持久化 + 券商口径重建 ----
+# 三层防线（与状态文件互为冗余，目标环境 IO 沙箱下任何一层单独失效都不致重复开仓）：
+#   ① _pending_save/_pending_load：台账独立落盘（复用 _lock_and_write 原子写），
+#      _pending_add/_pending_clear 写穿，init 时加载；
+#   ② _rebuild_pending_from_broker：以券商委托查询(has_live_buy_order)为准重建台账，
+#      每标的每进程首次 handlebar 执行一次——券商数据天然跨进程存活，不依赖本地 IO；
+#   ③ _STATE_PERSIST_OK：save_state 失败阻断新首仓（见 save_state）。
+
+
+def _pending_save():
+    """在途买单台账原子落盘；失败节流告警（不抛异常，不影响交易主流程）。"""
+    try:
+        def _w(fp):
+            fp.write(json.dumps({"buys": _PENDING_BUYS, "ts": _PENDING_TS},
+                                ensure_ascii=False).encode("utf-8"))
+        _lock_and_write(PENDING_FILE, _w)
+        _mirror_copy("gf_native_pending.json")   # AUD38：镜像同步到广发 QMT 目录
+    except Exception as _e:
+        _save_fail_alert("pending", PENDING_FILE, _e)
+
+
+def _pending_load():
+    """init 时从磁盘恢复在途买单台账（文件不存在/损坏时静默跳过，保持空台账）。"""
+    try:
+        if not os.path.exists(PENDING_FILE):
+            return
+        blob, _err = _read_file_bytes(PENDING_FILE)
+        if blob is None:
+            return
+        d = json.loads(blob.decode("utf-8"))
+        if not isinstance(d, dict):
+            return
+        buys = d.get("buys") or {}
+        ts = d.get("ts") or {}
+        now = time.time()
+        n = 0
+        for k, v in buys.items():
+            try:
+                v = int(v)
+            except Exception:
+                continue
+            if v <= 0:
+                continue
+            t = 0.0
+            try:
+                t = float(ts.get(k, 0.0) or 0.0)
+            except Exception:
+                t = 0.0
+            # 超过 1 个自然日的残留台账直接丢弃（超时结算机制本就会清理，这里防陈旧数据）
+            if t > 0 and now - t > 86400:
+                continue
+            if _PENDING_BUYS.get(k, 0) < v:
+                _PENDING_BUYS[k] = v
+                if t > 0:
+                    _PENDING_TS[k] = t
+                n += 1
+        if n:
+            log("【在途台账恢复】从 %s 恢复 %d 条在途买单记录（防重启重复开仓）"
+                % (os.path.basename(PENDING_FILE), n))
+    except Exception as _e:
+        # AUD29(2026-10-07 铁律审计)：此前损坏/异常静默跳过，重启用会丢失在途台账，
+        # 若恰有未成交在途买单，可能重复开仓。改为留痕后仍保持“空台账安全启动”。
+        log("[%s] 警告：在途台账 %s 读取/解析失败，本次以空台账启动，"
+            "请人工确认是否有未成交买单（%s）" % (PENDING_FILE, PENDING_FILE, repr(_e)))
+
+
+def _rebuild_pending_from_broker(acct, code):
+    """以券商委托为准重建在途买单台账（P0-1 第②层防线）。
+    每标的每进程仅首次 handlebar 执行一次（_PENDING_REBUILT 去重）；
+    本地台账已有记录时不覆盖（本地口径优先，避免与 ① 冲突）。
+    数据源 has_live_buy_order 来自券商，天然跨进程存活，不依赖本地 IO。
+    AUD2 修复(2026-10-03)：委托查询失败不再「一次失败整日无重试」——失败计数并按
+    _REBUILD_COOLDOWN(60s) 冷却定时重试；连续失败达 _REBUILD_MAX_FAILS(3) 次转入
+    _REBUILD_BREAKER 熔断态（暂停新买入，卖出/止盈不受限），查询恢复成功后自动
+    解除熔断并重建台账。"""
+    if code in _REBUILD_BREAKER:
+        # AUD33(2026-10-08 零预设独立审计)：原实现熔断后直接 return 永不复查——委托查询
+        # 一旦连续失败 3 次，该标的当日剩余时间永久停止买入，只能重启恢复，与下方 docstring
+        # 「查询恢复成功后自动解除熔断并重建台账」的承诺不符。现改为熔断态同样按冷却周期
+        # 继续查询券商委托：成功即解除熔断并重建台账，仍失败则刷新冷却下根 bar 再试。
+        _now_b = time.time()
+        if _now_b < _REBUILD_RETRY_TS.get(code, 0.0):
+            return                                 # 熔断冷却期内：下根 bar 再试
+        _bok_b, _blive_b, _bunk_b, _bdt_b = has_live_buy_order(acct, code)
+        if _bok_b:
+            _REBUILD_BREAKER.discard(code)
+            _REBUILD_FAILS.pop(code, None)
+            _REBUILD_RETRY_TS.pop(code, None)
+            log("[%s] 【台账重建熔断解除】券商委托查询已恢复，解除熔断并重新登记在途台账(%s)"
+                % (code, _bdt_b))
+            _beff_b = int(_blive_b) + int(_bunk_b)
+            if _beff_b > 0:
+                _PENDING_BUYS[code] = _beff_b
+                _PENDING_TS[code] = time.time()
+                _pending_save()
+            _PENDING_REBUILT.add(code)
+            return
+        _REBUILD_RETRY_TS[code] = _now_b + _REBUILD_COOLDOWN
+        log("[%s] 【台账重建熔断】委托查询仍失败(累计%d次)，保持熔断暂停买入，%ds后自动复查"
+            % (code, _REBUILD_FAILS.get(code, 0) + 1, int(_REBUILD_COOLDOWN)))
+        return
+    if code in _PENDING_REBUILT:
+        return                                     # 每进程每标的仅重建一次（成功后标记）
+    _now = time.time()
+    if _now < _REBUILD_RETRY_TS.get(code, 0.0):
+        return                                     # 60s 冷却内：下根 bar 再试，不阻塞 bar
+    if _PENDING_BUYS.get(code, 0) > 0:
+        _PENDING_REBUILT.add(code)
+        return
+    ok, live, unk, detail = has_live_buy_order(acct, code)
+    if ok:
+        _eff = int(live) + int(unk)
+        if _eff > 0:
+            _PENDING_BUYS[code] = _eff
+            _PENDING_TS[code] = time.time()
+            _pending_save()
+            if unk > 0 and live <= 0:
+                log("[%s] 【在途台账重建】券商有%d股活跃委托但方向字段不可读(%s)，"
+                    "按在途买单保守登记（AUD16：方向未知单列计数，不与已知买单混淆）"
+                    % (code, unk, detail))
+            else:
+                log("[%s] 【在途台账重建】券商仍有未终结买单%d股(%s)，已按券商口径登记在途，"
+                    "防止重启/状态丢失后重复开仓" % (code, live, detail))
+        _PENDING_REBUILT.add(code)                 # 查询成功即视为完成（无论有无在途）
+        _REBUILD_FAILS.pop(code, None)
+        _REBUILD_RETRY_TS.pop(code, None)
+        return
+    # 查询失败：计数 + 冷却重试；连续失败达阈值熔断（暂停买入）
+    _REBUILD_FAILS[code] = _REBUILD_FAILS.get(code, 0) + 1
+    _REBUILD_RETRY_TS[code] = _now + _REBUILD_COOLDOWN
+    if _REBUILD_FAILS[code] >= _REBUILD_MAX_FAILS:
+        _REBUILD_BREAKER.add(code)
+        log("【台账重建熔断】%s 券商委托查询连续失败%d次，无法确认是否仍有在途买单，"
+            "已熔断暂停新买入；委托查询恢复将自动解除（止盈/卖出不受限）"
+            % (code, _REBUILD_FAILS[code]))
+        _notify_risk("rebuild_fail",
+                     "%s 券商委托查询连续失败%d次，已熔断暂停买入" % (code, _REBUILD_FAILS[code]))
+    else:
+        log("[%s] 在途台账重建：券商委托查询失败（第%d次/%d），%ds后自动重试"
+            % (code, _REBUILD_FAILS[code], _REBUILD_MAX_FAILS, int(_REBUILD_COOLDOWN)))
+
+
+def _log_dup_guard(code, msg):
+    """防重复下单告警（按 _DUP_LOG_GAP 节流，避免每 bar 刷屏）。"""
+    now = time.time()
+    if now - _DUP_LOG_TS.get(code, 0.0) >= _DUP_LOG_GAP:
+        _DUP_LOG_TS[code] = now
+        log("[%s] 【防重复下单】%s" % (code, msg))
+
+
+# ---- AUD32(2026-10-07 铁律审计)：买卖触发条件明细日志 ----
+# 背景：此前买入/卖出执行前后、以及被闸门拦截时，各处的日志格式不一、字段不全，
+#       人工核对与调试时难以一眼看出「是哪条规则、依据什么参数值、结论是什么」。
+# 目标：在每次买入/卖出执行之前、以及无法成交（被任一闸门拦截/下单失败）时，
+#       输出统一的「触发条件明细」记录，包含触发类型、具体判断依据、相关参数值。
+# 铁律保障：本函数只输出日志，不改变任何下单/止损逻辑；hard_stop 仍保持禁用。
+_TRIG_LOG_GAP = 3.0     # 同一 code+方向 的触发条件明细日志节流（秒），防刷屏
+_TRIG_LOG_TS = {}       # code+side -> 上次输出时间戳
+
+
+def _trig_due(key):
+    """触发条件明细日志是否到期（按 code+方向 节流，避免同一根 bar 内反复刷屏）。"""
+    now = time.time()
+    if now - _TRIG_LOG_TS.get(key, 0.0) >= _TRIG_LOG_GAP:
+        _TRIG_LOG_TS[key] = now
+        return True
+    return False
+
+
+def _emit_trade(trigger, code, side, vol, price, params, result, detail=""):
+    """统一输出买卖触发条件明细。
+    trigger : 触发类型（如「首仓信号」「金字塔加仓第N档」「盘中阶梯加仓」「涨停卖出」
+               「止盈卖出」），由调用方的 reason 语义归纳而来。
+    code    : 标的代码；side : BUY/SELL；vol : 数量；price : 委托价。
+    params  : 参与本次判定的关键参数值字典（如 KDJ、WR、MA、滑点、阈值等）。
+    result  : 结论：SEND(已发委托)/BLOCK(被闸门拦截)/FAIL(下单失败)。
+    detail  : 具体判断依据的补充说明（拦截原因/异常信息）。
+    仅输出日志，不参与任何交易决策，铁律不受影响。
+    """
+    key = "%s|%s" % (code, side)
+    # AUD33(2026-10-08 零预设独立审计)：BLOCK/FAIL 是「被拦截/下单失败」结论，必须每次输出——
+    # 原实现与入口 SEND 共用同一 3s 节流键，同根 bar 内被闸门拦截时后一条被吞，日志只显示
+    # 「已发委托」而无拦截原因，人工排查误判为已下单。现仅 SEND/CHECK 走节流。
+    if result not in ("BLOCK", "FAIL") and not _trig_due(key):
+        return
+    _p = " | ".join("%s=%s" % (k, v) for k, v in (params or {}).items())
+    _r = {
+        "SEND":  "已发委托",
+        "CHECK": "待校验",
+        "BLOCK": "被闸门拦截",
+        "FAIL":  "下单失败",
+    }.get(result, result)
+    log("[%s] 【触发条件】分析 | 标的=%s | 方向=%s | %d股@%.2f | "
+        "触发类型=%s | 结论=%s | 参数[%s] | 依据=%s"
+        % (code, code, side, vol, price, trigger, _r, _p, detail))
+
+
+# ---- 2026-09-30 下单失败聚合告警 ----
+# 背景：此前下单失败仅逐条 log，连续失败（网络抖动/柜台拒绝/资金不足）不易及时发现，
+# 且可能伴随"策略认为已下单、柜台未收到"的隐性风险。现增加失败计数与聚合告警：
+# 累计失败达到阈值后输出醒目告警（含节流），提醒人工介入核查。
+_ORDER_FAIL_COUNT = 0          # 下单失败累计次数
+_ORDER_FAIL_ALERT_TS = 0.0     # 上次聚合告警时间戳
+_ORDER_FAIL_ALERT_GAP = 300.0  # 聚合告警最小间隔（秒）
+_ORDER_FAIL_ALERT_EVERY = 3    # 每累计失败 N 次输出一次聚合告警
+
+
+def _bump_order_fail(code, msg):
+    """下单失败计数并聚合告警（含节流）。msg 为本次失败的具体原因日志（已另行打印）。"""
+    global _ORDER_FAIL_COUNT, _ORDER_FAIL_ALERT_TS
+    _ORDER_FAIL_COUNT += 1
+    now = time.time()
+    if (_ORDER_FAIL_COUNT % _ORDER_FAIL_ALERT_EVERY == 0
+            and now - _ORDER_FAIL_ALERT_TS >= _ORDER_FAIL_ALERT_GAP):
+        _ORDER_FAIL_ALERT_TS = now
+        log("【下单失败聚合告警】下单累计失败 %d 次（含 %s），"
+            "请人工核查柜台/资金/账户状态；若连续失败请暂停策略排查"
+            % (_ORDER_FAIL_COUNT, code))
+        # AUD4 修复(2026-10-03)：聚合告警同步外部通知（本地风险事件文件 + 可选 webhook）
+        _notify_risk("order_fail",
+                     "下单累计失败%d次(最近含%s)，请人工核查柜台/资金/账户状态"
+                     % (_ORDER_FAIL_COUNT, code))
+    elif _ORDER_FAIL_COUNT == 1:
+        log("【下单失败】%s 首次失败已记录，连续失败将聚合告警" % code)
+
+# ---- 2026-09-28 诊断日志节流 ----
+# 背景：模型运行在「模拟模式」时 passorder 不产生真实委托，券商委托列表恒为 0 条，
+# settle_pending_timeout() 的超时诊断分支会因此每根 bar 触发。实测峰值 64 行/秒、
+# 151 KB/分钟（gf_native_trade.log 单日可达约 36 MB），且每次都调用 order_diag()
+# 反查券商委托列表，平白增加接口压力。现按标的做 60 秒节流。
+_DIAG_LOG_TS = {}      # code -> 上次诊断输出时间戳
+_DIAG_LOG_GAP = 300.0  # 诊断日志节流间隔（秒）：原 60s 对 1分钟 bar 节流失效，改 300s（2026-10-08）
+
+
+def _diag_due(code):
+    """诊断日志是否到期可输出（按标的 60 秒节流）。返回 True 表示本次放行。"""
+    now = time.time()
+    if now - _DIAG_LOG_TS.get(code, 0.0) >= _DIAG_LOG_GAP:
+        _DIAG_LOG_TS[code] = now
+        return True
+    return False
+
+
+# QMT 委托终结状态码（innerApi ORDER）：53部撤/54已撤/56已成/57废单。
+# 55部成=部分成交、剩余仍挂单，属活跃；48未报/49待报/50已报/51已报待撤/52部成待撤亦为活跃。
+# 保守口径：多留 pending 只是暂缓买入；误清 pending 才会导致重复下单。
+_ORDER_DEAD_STATUS = (53, 54, 56, 57)
+
+# 委托状态码中文名（仅用于日志诊断，便于人工判读废单原因）
+_ORDER_STATUS_TEXT = {
+    48: "未报（券商还没收到）",
+    49: "待报（排队等券商接收）",
+    50: "已报（券商已收到，等撮合）",
+    51: "已报待撤（等撮合时申请撤单）",
+    52: "部撤（撤掉了一部分）",
+    53: "部撤/终结（撤单结束）",
+    54: "已撤（全部撤掉了）",
+    55: "部成待撤（成交了一部分，剩下的在撤）",
+    56: "已成（全部成交了）",
+    57: "废单（券商拒绝了）",
+}
+
+
+def count_orders_for_code(acct, code):
+    """该标的当日委托条数（2026-09-24 新增）。为 0 表示券商委托列表里从未出现该标的，
+    即委托未到达券商（典型场景：模型运行在模拟模式），用于把"被拒"与"没提交"区分开。"""
+    ok, arr = _td_query(acct, "ORDER")
+    if not ok:
+        return -1
+    n = 0
+    for od in (arr or []):
+        try:
+            pid = "%s.%s" % (getattr(od, "m_strInstrumentID", "") or "",
+                             getattr(od, "m_strExchangeID", "") or "")
+            if pid == code:
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def account_diag(acct):
+    """账号快照摘要（2026-10-01 用户要求精简）：
+    策略日志不再输出账户资金 / 委托明细等快照内容，仅保留：
+      ① 实盘持仓股票只数；② 其中本策略持仓的股票名称与代码。
+    供 init 启动自检与结算排查路径调用；信息最小化优先
+    （资金字段 / 非策略标的明细一律不写入策略日志）。"""
+    # 策略关注标的集合：快照只需列本策略持仓的名称与代码，
+    # 其余实盘持仓只计只数、不列明细（信息最小化）。
+    _focus = set()
+    try:
+        for _s in enabled_symbols():          # 多标的版口径
+            _focus.add(_s.get("code"))
+    except Exception:
+        pass
+    try:
+        # AUD41：SYMBOL 为单股版残留——本文件无该定义，靠 try/except 吞掉（仅标注，不删）
+        _focus.add(SYMBOL)                    # 单股版口径
+    except Exception:
+        pass
+    ok, parr = _td_query(acct, "POSITION")
+    if not ok:
+        return "持仓查询不可用"
+    n_total = len(parr or [])
+    mine = []
+    for _o in (parr or []):
+        try:
+            _full = "%s.%s" % (getattr(_o, "m_strInstrumentID", "") or "",
+                               getattr(_o, "m_strExchangeID", "") or "")
+            if _full in _focus:
+                mine.append(_cn(_full))       # "002142 宁波银行"（名称与代码）
+        except Exception:
+            continue
+    if mine:
+        return "实盘持仓%d只股票，其中本策略持仓%d只：%s" % (n_total, len(mine), "; ".join(mine))
+    return "实盘持仓%d只股票（本策略无持仓）" % n_total
+
+
+def _fmt_ord_price(pr):
+    """委托价格式化（AUD34 第二轮零预设审计）：非数值/缺失显示 "-"，避免 float() 抛异常吞掉整条诊断行。"""
+    if pr is None or pr == "":
+        return "-"
+    try:
+        return "%.2f" % float(pr)
+    except (TypeError, ValueError):
+        return "-"
+
+
+def order_diag(C, acct, code):
+    """废单根因诊断（2026-09-24）：打印该标的当日委托的状态码/委托量/成交量/委托价
+    与账户可用资金，用于判定"委托被拒"是价格笼子、资金不足还是权限问题。
+    仅在下单被终结的排查路径调用（结算时每分钟至多一次，无性能影响）。"""
+    ok, arr = _td_query(acct, "ORDER")
+    if not ok:
+        return "委托查询不可用 | " + account_diag(acct)
+    rows = []
+    for od in (arr or []):
+        try:
+            pid = "%s.%s" % (getattr(od, "m_strInstrumentID", "") or "",
+                             getattr(od, "m_strExchangeID", "") or "")
+            if pid != code:
+                continue
+            st = int(getattr(od, "m_nOrderStatus", -1) or -1)
+            pr = getattr(od, "m_nOrderPrice", None)
+            if pr is None:
+                pr = getattr(od, "m_dLimitPrice", None)
+            rows.append("%s|%s|委托%s股|成交%s股|价%s" % (
+                getattr(od, "m_strOrderSysID", "") or "-",
+                _ORDER_STATUS_TEXT.get(st, "未知"),
+                getattr(od, "m_nVolume", 0),
+                getattr(od, "m_nDealtVolume", 0),
+                _fmt_ord_price(pr)))
+        except Exception:
+            continue
+    return "本标的委托%d条[%s] | %s" % (
+        len(rows), "; ".join(rows) if rows else "无", account_diag(acct))
+
+
+_ORDER_DIR_FIELD = {"field": "", "sample": "", "ts": 0.0}   # AUD3：命中的方向字段名诊断
+
+
+def _read_order_direction(od):
+    """AUD3 修复(2026-10-03)，AUD16 修复(2026-10-04)：从委托对象读取方向（48=买/49=卖）。
+    QMT 不同版本委托对象方向字段名不一致（主线 m_nOffsetFlag，个别版本为
+    m_strOffsetFlag/m_nDirection/m_dDirection 等）。统一从候选字段名探测：
+    防止「字段名随版本漂移 -> 方向误判 -> 卖单被当成在途买单 -> 买入被错误堵塞
+    （或买单被当成卖单 -> 防重复下单闸门失效）」。
+    AUD16：全部候选字段取不到时返回 None（方向未知）——原返回 48 会把活跃卖单
+    静默当成活跃买单；调用方对 None 单独计数并显式告警（不再静默假设买/卖）。"""
+    for _f in ("m_nOffsetFlag", "m_strOffsetFlag", "m_nDirection", "m_dDirection"):
+        _v = getattr(od, _f, None)
+        if _v is None:
+            continue
+        try:
+            _x = int(_v)
+        except Exception:
+            try:
+                _x = int(float(_v))
+            except Exception:
+                continue
+        if not _ORDER_DIR_FIELD["field"]:
+            _ORDER_DIR_FIELD.update({"field": _f, "sample": str(_v), "ts": time.time()})
+        return _x
+    return None
+
+
+def has_live_buy_order(acct, code):
+    """查询账户内该标的「未终结买单」。AUD16 修复(2026-10-04)：返回四元组。
+    返回 (ok, live_vol, unknown_vol, detail)：
+      ok=False 表示委托查询不可用——调用方必须保持 pending 不清（安全侧失效）；
+      live_vol   方向明确为买的未终结委托剩余股数；
+      unknown_vol 方向字段不可读的未终结委托股数（单独计数，不并入 live——
+                  调用方保守按在途处理，但日志显式区分，杜绝「卖单被静默当买单」）；
+      detail  人类可读摘要。
+    方向 m_nOffsetFlag: 48=买/49=卖；取不到时 AUD16 按「未知」单列。"""
+    ok, arr = _td_query(acct, "ORDER")
+    if not ok:
+        return False, 0, 0, "委托查询不可用"
+    # 记录账号级委托可见性：查询"成功"但整账号 0 条委托，而我们刚下过单，
+    # 说明查询账号/范围不可信（模拟盘实测），不能据此判定委托已终结。
+    _LAST_ORDER_QUERY["n"] = len(arr) if arr else 0
+    live = 0
+    unk = 0
+    seen = 0
+    for od in arr:
+        try:
+            pid = "%s.%s" % (getattr(od, "m_strInstrumentID", "") or "",
+                             getattr(od, "m_strExchangeID", "") or "")
+            if pid != code:
+                continue
+            st = getattr(od, "m_nOrderStatus", None)
+            if st is None:
+                continue
+            try:
+                st = int(st)
+            except Exception:
+                continue
+            seen += 1
+            if st in _ORDER_DEAD_STATUS:
+                continue
+            off = _read_order_direction(od)
+            if off == 49:        # 卖单不影响在途买单口径
+                continue
+            v = int(getattr(od, "m_nVolume", 0) or 0)
+            dealt = getattr(od, "m_nDealtVolume", None)
+            if dealt is not None:
+                try:
+                    v = max(0, v - int(dealt))
+                except Exception:
+                    pass
+            v = max(0, v)
+            if off is None:
+                unk += v         # AUD16：方向未知，单独计数
+            else:
+                live += v
+        except Exception:
+            continue
+    if unk > 0:
+        return True, live, unk, ("活跃买单%d股+方向未知活跃委托%d股(共%d条委托)" % (live, unk, seen))
+    return True, live, unk, "活跃买单%d股(共%d条委托)" % (live, seen)
+
+
+def settle_pending_timeout(C, acct, code):
+    """在途买单超时结算（2026-09-24 新增）。返回 True 表示本次清理了 pending。
+
+    背景：委托可能被券商拒绝（资金不足/价格笼子/废单），此时券商持仓永不变化，
+    pending 若永久挂住会让该标的再也不买入。故超时后查委托二次确认：
+      · 无活跃买单 → 委托已终结且未成交 → 清理 pending，恢复正常。
+      · 仍有活跃买单 → 保持 pending（不重复下单）。
+      · 委托查询不可用 → 保持 pending 并告警（安全侧失效，优先不重复下单）。
+    """
+    p = _PENDING_BUYS.get(code, 0)
+    if p <= 0:
+        return False
+    ts = _PENDING_TS.get(code, 0.0)
+    if not ts or time.time() - ts < _PENDING_TTL:
+        return False
+    if _PENDING_TTL_FORCE > 0:
+        _pending_clear(code, "超时%.0fs强制清理(_PENDING_TTL_FORCE)" % _PENDING_TTL)
+        return True
+    ok, live, unk, detail = has_live_buy_order(acct, code)
+    if not ok:
+        _log_dup_guard(code, "在途买单%d股超时且%s，保持拦截不重复下单，请人工核对委托"
+                       % (p, detail))
+        return False
+    if unk > 0:
+        # AUD16(2026-10-04)：方向未知活跃委托不并入 live，但也不据此清理 pending——
+        # 无法排除其中有本策略未成交买单，保守保持拦截并显式告警（委托终结后自动解除）。
+        _log_dup_guard(code, "在途买单%d股超时，另有%d股方向未知活跃委托(%s)，"
+                       "无法确认非本策略买单，保守保持拦截" % (p, unk, detail))
+        return False
+    if live <= 0:
+        # 2026-09-24 14:48 根因定位：委托"凭空消失"而非"被拒"。
+        # 若该标的当日委托条数为 0（券商委托列表里压根没出现过），说明委托未送到券商，
+        # 最常见原因是模型运行在「模拟/仿真」模式（QMT 启动日志含 "[trade]start simulation mode"）——
+        # 此时 passorder 只在本地记账，不产生真实委托，与价格类型/资金/权限无关。
+        if count_orders_for_code(acct, code) == 0:
+            log("【委托诊断】%s" % order_diag(C, acct, code))
+            log("【根因提示】%s 当日在券商委托列表中为 0 条 → 委托未到达券商，"
+                "与价格/资金/权限无关。请核对模型的运行模式："
+                "启动日志含 \"[trade]start simulation mode\" 即为模拟模式，"
+                "需在模型交易界面切换为「实盘/真实交易」后才会真正下单。" % code)
+        # 2026-09-24 13:03 二次事故修复：查询"成功"但整个账号一条委托都查不到，
+        # 而我们 _PENDING_TTL 秒前刚提交过买单——即便委托已终结，当日委托记录
+        # 也应可见。0 条说明查询账号/范围不可信（模拟盘实测），保守保持拦截。
+        if _LAST_ORDER_QUERY.get("n", 0) <= 0:
+            _log_dup_guard(code, "在途买单%d股超时，但委托查询返回0条记录"
+                           "(%.0fs前刚下过单不应为空，查询账号/范围可疑)，保守保持拦截不重复下单"
+                           % (p, _PENDING_TTL))
+            log("【委托诊断】%s" % order_diag(C, acct, code))
+            return False
+        # 废单根因诊断（2026-09-24）：把委托状态码/成交量/可用资金打进日志，
+        # 便于人工区分「价格笼子废单 / 资金不足 / 委托权限」三类拒单原因。
+        log("【委托诊断】%s" % order_diag(C, acct, code))
+        _pending_clear(code, "超时%.0fs且委托确认已无活跃买单(委托被拒/已终结未成交)" % _PENDING_TTL)
+        _LAST_SETTLE_TS[code] = time.time()
+        # 闸1：结算后冷却——禁止立刻重开首仓，给人工核对窗口
+        _SETTLE_COOLDOWN[code] = time.time() + _SETTLE_REOPEN_COOLDOWN
+        # 闸2：连续失败计数——同一标的反复"下单→判死"达到阈值即熔断
+        n = _SETTLE_FAILS.get(code, 0) + 1
+        _SETTLE_FAILS[code] = n
+        if n >= _SETTLE_FAIL_BREAKER:
+            _SETTLE_BREAKER.add(code)
+            _SETTLE_BREAKER_DATE[code] = datetime.now().strftime("%Y-%m-%d")
+            log("【在途单熔断】%s 连续%d次超时结算仍未见成交，已暂停买入。"
+                "请人工核对QMT委托/成交回报（确认委托是否被拒/是否实际成交）；"
+                "核实后删除状态文件重启解除熔断" % (code, n))
+        return True
+    _log_dup_guard(code, "在途买单%d股超时，券商仍有%s，继续等待成交" % (p, detail))
+    return False
+
+
+def _sell_order_status(acct, code):
+    """AUD14 修复(2026-10-04)：查询该标的当日卖单活跃状态（与买单侧
+    settle_pending_timeout 对称的委托确认机制）。
+    返回 (ok, any_active, detail)：
+      ok=False    委托查询不可用——调用方保守继续等待（安全侧失效）；
+      any_active=True  该标的仍有未终结委托：含明确卖单（49），或方向未知委托
+                  （AUD16：无法排除是本策略卖单，保守按活跃）；
+      any_active=False 全部委托已终结（已成/已撤/废单）——卖单确认死亡，
+                  调用方可按实际持仓恢复状态。
+    """
+    ok, arr = _td_query(acct, "ORDER")
+    if not ok:
+        return False, True, "委托查询不可用"
+    any_active = False
+    bits = []
+    for od in (arr or []):
+        try:
+            pid = "%s.%s" % (getattr(od, "m_strInstrumentID", "") or "",
+                             getattr(od, "m_strExchangeID", "") or "")
+            if pid != code:
+                continue
+            st = getattr(od, "m_nOrderStatus", None)
+            if st is None:
+                continue
+            try:
+                st = int(st)
+            except Exception:
+                continue
+            if st in _ORDER_DEAD_STATUS:
+                continue
+            v = int(getattr(od, "m_nVolume", 0) or 0)
+            off = _read_order_direction(od)
+            if off == 49:
+                any_active = True
+                bits.append("活跃卖单%d股" % v)
+            else:
+                # 48/方向未知：无法排除是本策略卖单（字段漂移场景），保守按活跃
+                any_active = True
+                bits.append("活跃委托%d股(方向=%s)" % (v, "未知" if off is None else off))
+        except Exception:
+            continue
+    return True, any_active, (";".join(bits) if bits else "无活跃委托")
+
+
+def get_tick_safe(C, code):
+    """实时tick（innerApi: C.get_full_tick(stock_code)）。取不到/价格无效返回 None，
+    调用方跳过本根bar。内置Python单线程：失败不 sleep 重试，下一根 bar 自动再取。"""
+    try:
+        tick_map = C.get_full_tick([code])
+        t = tick_map.get(code) if tick_map else None
+        if t:
+            px = float(t.get("lastPrice") or t.get("last") or 0.0)
+            if px > 0:
+                return t
+    except Exception:
+        pass
+    log("[%s] 实时tick获取失败，本根bar跳过" % code)
+    return None
+
+
+def _log_hist_issue(code, msg, force=False):
+    """历史数据问题日志节流：同一标的每 _HIST_ISSUE_GAP 秒最多一条，
+    避免数据缺失时每 3 秒刷屏（原实现一次故障刷出上千行日志），并附带取数诊断。"""
+    now = time.time()
+    if force or now - _HIST_ISSUE_TS.get(code, 0.0) >= _HIST_ISSUE_GAP:
+        _HIST_ISSUE_TS[code] = now
+        log("[%s] %s | 取数诊断: %s" % (code, msg, _HIST_DIAG.get(code, "-")))
+
+
+def _try_download_hist(code, force=False):
+    """历史K线缺失时补下载日线（2026-09-24 冷却重试版）。
+
+    原实现「每标的每日仅 1 次」有致命时序缺陷：download_history_data 是异步接口，
+    调用后数据尚未落盘即被判定失败，而当日不再重试 → 策略整日卡在「实得1根」
+    （2026-09-24 09:30~10:01 实盘日志复现）。
+    现改为：60s 冷却 + 每日上限 20 次；优先 download_history_data2（支持进度回调、
+    落盘更及时），失败回退 download_history_data。遵循单线程约束：不做长等待，
+    仅 0.2s 让步让下载线程写盘，其余靠冷却窗口自然重试。
+    返回 True 表示本次已发起下载（调用方应重拉一次）。
+    """
+    now = time.time()
+    if not force and now - _HIST_DL_LAST.get(code, 0.0) < _HIST_DL_COOLDOWN:
+        return False
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _HIST_DL_DAY.get(code) != today:
+        _HIST_DL_DAY[code] = today
+        _HIST_DL_CNT[code] = 0
+    if _HIST_DL_CNT.get(code, 0) >= _HIST_DL_MAX:
+        return False
+    _HIST_DL_LAST[code] = now
+    _HIST_DL_CNT[code] = _HIST_DL_CNT.get(code, 0) + 1
+    errs = []
+    for name, args in (("download_history_data2", (code, "1d", "", "", None)),
+                       ("download_history_data", (code, "1d", "", "")),
+                       ("download_history_data", (code, "1d", ""))):
+        try:
+            fn = _DL_FUNCS.get(name)
+        except Exception:
+            continue                      # 该版本不存在此函数
+        try:
+            fn(*args)
+            log("[%s] 已触发日线补下载(%s, %d参, 今日第%d次)，落盘后自动复算"
+                % (code, name, len(args), _HIST_DL_CNT[code]))
+            time.sleep(0.2)               # 极短让步：给下载线程写盘机会，不阻塞客户端
+            return True
+        except Exception as e:
+            errs.append("%s(%d参): %s" % (name, len(args), e))
+    _log_hist_issue(code, "日线补下载全部失败[%s]，请在客户端『行情-数据管理』手动下载日线"
+                    % ("; ".join(errs) if errs else "无可用下载接口"), force=True)
+    return False
+
+
+def _hist4_from_ex(C, code, n, div, use_fill):
+    """AUD13 修复(2026-10-04)：同一形态一次取齐 close/high/low/volume 四字段。
+    同一 get_market_data_ex 调用返回的 DataFrame 天然同源同口径，
+    杜绝「close 前复权 + high/low 不复权」混拼（原实现逐字段独立选形态，
+    仅校验长度一致不校验口径一致，除权除息附近 KDJ/WR/底背离全部失真）。
+    任一字段含 NaN/不可转 float 视为该形态失败。返回 (c,h,l,v,末根日期key) 或 None。"""
+    fields = ["close", "high", "low", "volume"]
+    if use_fill:
+        data = C.get_market_data_ex(fields, [code], period="1d", count=n,
+                                    dividend_type=div, fill_data=True)
+    else:
+        data = C.get_market_data_ex(fields, [code], period="1d", count=n,
+                                    dividend_type=div)
+    df = data.get(code) if isinstance(data, dict) else None
+    if df is None or len(df) == 0:
+        return None
+    cols = list(getattr(df, "columns", []))
+    out = []
+    for f in fields:
+        if f not in cols:
+            return None
+        vals = []
+        for x in list(df[f]):
+            try:
+                fx = float(x)
+            except (TypeError, ValueError):
+                return None
+            if fx != fx:            # NaN：序列不完整，本形态作废
+                return None
+            vals.append(fx)
+        out.append(vals)
+    try:
+        _last_key = str(list(df.index)[-1]).replace("-", "").replace(" ", "")[:8]
+    except Exception:
+        _last_key = ""
+    return out[0], out[1], out[2], out[3], _last_key
+
+
+def _hist4_from_old(C, code, n, dividend_type):
+    """AUD13：老接口 get_history_data 按同一 dividend_type 取齐四字段（同口径）。
+    老接口无日期信息，末根日期 key 返回 ""（口径未知，由调用方按旧行为处理）。"""
+    out = []
+    for f in ("close", "high", "low", "volume"):
+        vals = _hist_vals_old(C, code, f, n, dividend_type)
+        if not vals:
+            return None
+        out.append(vals)
+    return out[0], out[1], out[2], out[3], ""
+
+
+def _closed_slice(seq, has_today_bar):
+    """AUD17 修复(2026-10-04)：按「末根是否为当日进行中 bar」取已收盘序列。
+      has_today_bar=True/None -> 剔除末根（旧行为；None=老接口口径未知沿用旧假设）
+      has_today_bar=False     -> 序列已全部为已收盘 bar，原样返回（不再误剔昨日）"""
+    if has_today_bar is False:
+        return seq
+    return seq[:-1] if len(seq) >= 2 else seq
+
+
+def _prev_closed_ref(seq, has_today_bar):
+    """AUD17：最近一根已收盘 bar 的值（健全性检查基准）。
+    末根为当日 bar 时取 [-2]（旧行为）；确认无当日 bar 时取 [-1]。"""
+    if not seq:
+        return 0.0
+    if has_today_bar is False:
+        return seq[-1]
+    return seq[-2] if len(seq) >= 2 else 0.0
+
+
+def _closed_avg_vol(vols, n, has_today_bar):
+    """AUD17：最近 n 根已收盘 bar 均量（参与率闸门数据源，单位：手）。
+    末根为当日 bar/口径未知时取 [-(n+1):-1]（旧行为）；确认无当日 bar 时取 [-n:]。AUD35(2026-10-08 第三轮零预设审计)：剔除成交量<=0的停牌/无成交日再平均，防均量被拉低、参与率上限偏小、误拦正常买入。"""
+    if vols is None:
+        return 0.0
+    if has_today_bar is False:
+        seg = vols[-n:]
+    else:
+        seg = vols[-(n + 1):-1]
+    if len(seg) < n:
+        return 0.0
+    nonzero = [v for v in seg if v is not None and v > 0]
+    return sum(nonzero) / float(len(nonzero)) if nonzero else 0.0
+
+
+def fetch_hist_fields(C, code, params, n=120):
+    """拉取四字段日线历史（30s 结果缓存 + 缺口补下载 + 冷却重试 + 日志节流）。
+
+    innerApi：行情函数避免高频并发请求（实盘 handlebar 每 tick 触发），缓存后每 30s
+    才真正拉数；信号为日线级，快照延迟不影响判定，交易决策价仍用实时 tick。
+    数据不足时：触发补下载并重拉一次；仍未恢复则返回 None（调用方跳过本根bar），
+    下一次调用受 60s 冷却约束再试下载——不会像原实现那样「当日只试一次后整日卡死」。
+    AUD9 修复(2026-10-03)：缓存口径文档化——30s TTL < 1min bar 周期，跨 bar 必然
+    重拉（不会复用上一根 bar 的旧数据）；信号只用已收盘 bar 与当日可复现跌幅，
+    缓存命中不改变交易决策口径（仅减少接口请求）。
+    AUD13 修复(2026-10-04)：改为「按形态取齐四字段」——每个候选形态一次性取
+    close/high/low/volume，同调用同口径；形态优先级 front(补齐)>front>none>
+    old/int3(前复权)>old/缺省，与原单字段探测口径一致。
+    AUD17 修复(2026-10-04)：返回值增加末根口径标志——
+        (closes, highs, lows, vols, has_today_bar)，
+        has_today_bar: True=末根为当日进行中bar / False=序列全部已收盘（如盘前、
+        部分版本不返回当日bar）/ None=老接口无法判定（沿用旧行为假设）。
+        调用方应经 _closed_slice/_prev_closed_ref/_closed_avg_vol 消费，不得裸切[:-1]。
+    """
+    need = params["ma_long"] + 5
+    cached = _HIST_CACHE.get(code)
+    if cached and time.time() - cached[0] < _HIST_TTL and cached[1] is not None \
+            and len(cached[1][0]) >= need:
+        return cached[1]
+    # P2-3 修复(2026-10-01)：失败态负缓存——10 秒内不重复探测（此前失败不写缓存，
+    # 数据源异常时每标的每 bar 最多 5 形态×4 字段全部重试，与 innerApi「行情函数
+    # 避免高频并发请求」直接冲突；数据最异常的时候接口压力最大）。
+    _fail_ts = _HIST_FAIL_CACHE.get(code, 0.0)
+    if _fail_ts and time.time() - _fail_ts < DATA_GATE_FAIL_TTL:
+        return None
+
+    def _once():
+        # AUD13：四字段同一形态一次取齐（同调用同口径，接口调用 4 次降为 1 次）
+        errs = []
+        forms = (
+            ("ex4/front+fill", lambda: _hist4_from_ex(C, code, n, "front_ratio", True)),
+            ("ex4/front", lambda: _hist4_from_ex(C, code, n, "front_ratio", False)),
+            ("ex4/none", lambda: _hist4_from_ex(C, code, n, "none", False)),
+            ("old4/int3", lambda: _hist4_from_old(C, code, n, 3)),
+            ("old4/dflt", lambda: _hist4_from_old(C, code, n, None)),
+        )
+        # AUD23(2026-10-05)：恢复「足量才收货」韧性——首个成功形态若不足 need 根，
+        # 继续探测后续形态，取首个足量者（首中即用会让退化数据态拿短序列整日跳过，
+        # 而后续形态本可拿满；同调用同口径原则不变）。全部不足时按原失败路径走补下载/跳过。
+        r = None
+        for tag, fn in forms:
+            try:
+                cand = fn()
+            except Exception as e:
+                errs.append("%s=%s" % (tag, e.__class__.__name__))
+                continue
+            if cand is None:
+                errs.append("%s=空" % tag)
+                continue
+            if len(cand[0]) < need:
+                errs.append("%s=短(%d<%d)" % (tag, len(cand[0]), need))
+                continue
+            r = cand
+            _HIST_DIAG[code] = ("form=%s c%d/h%d/l%d/v%d 末根=%s"
+                                % (tag, len(r[0]), len(r[1]), len(r[2]), len(r[3]),
+                                   r[4] or "未知"))
+            break
+        if r is None:
+            _log_hist_issue(code, "历史K线各形态均失败或不足量[%s]" % ("; ".join(errs)), force=True)
+            return None
+        closes, highs, lows, vols, last_key = r
+        if not (len(closes) == len(highs) == len(lows) == len(vols)):
+            _log_hist_issue(code, "历史K线字段长度不一致(c%d/h%d/l%d/v%d)"
+                            % (len(closes), len(highs), len(lows), len(vols)), force=True)
+            return None
+        # AUD17：末根是否为当日进行中 bar（ex 形态有日期可判；老接口返回 None 沿用旧假设）
+        if last_key:
+            flag_today = (last_key == datetime.now().strftime("%Y%m%d"))
+            if flag_today is False:
+                _log_hist_issue(code, "日线序列末根日期=%s 非当日——按「全部已收盘」口径"
+                                "计算指标（无当日bar，不再剔除末根）" % last_key)
+        else:
+            flag_today = None
+        # AUD7 修复(2026-10-03)：0 价清洗——除权/停牌/数据源缺省可能返回收盘价<=0 的
+        # bar，会拉高 MA 指标、污染均量口径（参与率闸）与仓位判断。四字段按索引同步
+        # 过滤收盘价<=0 的 bar（保持长度一致），过滤后不足 need 同样走补下载/失败路径。
+        _bad_idx = [i for i in range(len(closes))
+                    if closes[i] is None or float(closes[i]) <= 0
+                    or highs[i] is None or float(highs[i]) <= 0
+                    or lows[i] is None or float(lows[i]) <= 0]
+        if _bad_idx:
+            if _bad_idx[-1] == len(closes) - 1 and flag_today is True:
+                flag_today = False       # 末根(当日bar)被清走：序列末根已变为昨日
+            _bs = set(_bad_idx)
+            closes = [v for i, v in enumerate(closes) if i not in _bs]
+            highs = [v for i, v in enumerate(highs) if i not in _bs]
+            lows = [v for i, v in enumerate(lows) if i not in _bs]
+            vols = [v for i, v in enumerate(vols) if i not in _bs]
+            _log_hist_issue(code, "历史K线清除%d根收盘价<=0的bar(除权/停牌/缺省)"
+                            % len(_bad_idx))
+        if len(closes) < need:
+            _log_hist_issue(code, "历史K线不足%d根(实得%d)" % (need, len(closes)))
+            return None
+        return closes, highs, lows, vols, flag_today
+
+    r = _once()
+    if r is not None:
+        _HIST_CACHE[code] = (time.time(), r)
+        _HIST_FAIL_CACHE.pop(code, None)
+        return r
+    if _try_download_hist(code):
+        r = _once()
+        if r is not None:
+            log("[%s] 补下载后历史K线恢复(len=%d)" % (code, len(r[0])))
+            _HIST_CACHE[code] = (time.time(), r)
+            _HIST_FAIL_CACHE.pop(code, None)
+            return r
+    else:
+        # 处于冷却窗口内：不再刷「数据不足」，只按节流提示一次
+        _log_hist_issue(code, "历史K线数据不足，本根bar跳过（补下载冷却中，60s后自动重试）")
+    _HIST_FAIL_CACHE[code] = time.time()    # P2-3：失败态负缓存（DATA_GATE_FAIL_TTL 内不重试）
+    return None
+
+
+def _limit_ratio_by_code(code):
+    """AUD37(2026-10-08 第五轮零预设独立审计)：按代码前缀识别板块涨跌停幅度，
+    供 get_limit_prices_safe 兜底估算用：
+      60/00 开头=沪深主板 ±10%；30 开头=创业板 ±20%；68 开头=科创板 ±20%；8/4 开头=北交所 ±30%；名称含 ST/*ST 的 = ±5%（AUD41 补：ST 股涨跌停为 5%，原三档估算会偏大一倍）。
+    返回 (比例, 板块说明)。"""
+    base = (code or "").split(".")[0]
+    # AUD41：补 ST/*ST 档（±5%）——原实现仅 ±10%/±20%/±30% 三档，
+    # ST 标的的估算涨跌停价会偏大一倍（涨停价算高、跌停价算低）。
+    if "ST" in (_stock_name(code) or "").upper():
+        return 0.05, "ST/*ST(±5%)"
+    if base.startswith(("30", "68")):
+        return 0.20, "创业板/科创板(±20%)"
+    if base.startswith(("8", "4")):
+        return 0.30, "北交所(±30%)"
+    return 0.10, "主板(±10%)"
+
+
+def get_limit_prices_safe(C, code, last_close=0.0):
+    """当日涨跌停价（2026-09-22 修复致命缺陷）。
+    innerApi 的 C.get_full_tick 返回字段没有 upLimit/downLimit，原从 tick 取价恒为 0
+    → 涨停不买/跌停不卖门控恒拒绝 → 策略永不交易。改按官方文档用
+    C.get_instrument_detail(code) 的 UpStopPrice/DownStopPrice（获取最新一天涨跌停
+    的推荐接口）。当日成功才缓存（涨跌停价日内不变）；失败每 bar 重试、当日仅告警
+    一次；个别版本 tick 若带涨跌停字段则作降级兜底。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    cached = _LIMIT_CACHE.get(code)
+    if cached and cached[0] == today:
+        return cached[1], cached[2]
+    # AUD6 修复(2026-10-03)：失败冷却窗口内不重复调接口（60s 后自动重试）。
+    # B1 修复(2026-10-08)：冷却期内不再直接返回 (0,0)，改用昨收×(1±10%)推算兜底放行；
+    # 冷却重试真实价逻辑保留（60s 后自动重试，行情恢复即切回真实价）。
+    if time.time() < _LIMIT_RETRY_TS.get(code, 0.0):
+        if last_close > 0:
+            # AUD37(2026-10-08 第五轮零预设独立审计)：估算比例按板块识别（主板±10%/
+            # 创业板科创板±20%/北交所±30%），原固定 ±10% 对非主板标的全算错涨跌停价
+            _rest1, _best1 = _limit_ratio_by_code(code)
+            return round(last_close * (1 + _rest1), 2), round(last_close * (1 - _rest1), 2)
+        return 0.0, 0.0
+    up = dn = 0.0
+    try:
+        detail = C.get_instrument_detail(code)
+        if isinstance(detail, dict):
+            up = float(detail.get("UpStopPrice", 0.0) or 0.0)
+            dn = float(detail.get("DownStopPrice", 0.0) or 0.0)
+    except Exception:
+        pass
+    if up <= 0 or dn <= 0:
+        try:
+            t = (C.get_full_tick([code]) or {}).get(code) or {}
+            if up <= 0:
+                up = float(t.get("upLimit", 0.0) or 0.0)
+            if dn <= 0:
+                dn = float(t.get("downLimit", 0.0) or 0.0)
+        except Exception:
+            pass
+    if up > 0 and dn > 0:
+        _LIMIT_CACHE[code] = (today, up, dn)
+        _LIMIT_RETRY_TS.pop(code, None)
+        _LIMIT_STALL.pop(code, None)
+        return up, dn
+    # AUD6 修复(2026-10-03)：失败定时重试 + 当日停摆记录——原实现每 bar 都拉接口
+    #（行情接口异常时无效重试放大接口压力），改为 60s 冷却后自动重试；当日始终未
+    # 恢复则记入 _LIMIT_STALL，由 stop 汇总输出（见 stop）。冷却期内返回 (0,0)，
+    # 保持保守拒绝买卖。
+    _LIMIT_RETRY_TS[code] = time.time() + _LIMIT_RETRY_GAP
+    # B1 修复(2026-10-08，用户确认口径)：真实价缺失时先用 昨收×(1±10%) 推算兜底放行交易，
+    # 不再让该标的因行情接口异常而整天停摆；推算价不写缓存，60s 冷却重试到真实价后自动切回；
+    # 推算时打印日志+风险告警，标明当前为「估算价放行」，并从停摆汇总中剔除。
+    if last_close <= 0:
+        try:
+            last_close = float((locals().get("t") or {}).get("lastClose") or 0.0)
+        except Exception:
+            last_close = 0.0
+    if last_close > 0:
+        _LIMIT_STALL.pop(code, None)
+        # AUD37(2026-10-08 第五轮零预设独立审计)：估算比例按板块识别（主板±10%/
+        # 创业板科创板±20%/北交所±30%），当前标的宁波银行(002142 深市主板)行为不变
+        _rest2, _best2 = _limit_ratio_by_code(code)
+        if _LIMIT_WARN.get(code) != today:
+            _LIMIT_WARN[code] = today
+            log("[%s] 【涨跌停价兜底】get_instrument_detail 与 tick 均未返回真实涨跌停价，"
+                "按 昨收%.2f×(1±%.0f%%) 推算 up=%.2f dn=%.2f 放行交易（估算价，%s；"
+                "60s 后自动重试真实价）"
+                % (code, last_close, _rest2 * 100, round(last_close * (1 + _rest2), 2),
+                   round(last_close * (1 - _rest2), 2), _best2))
+            _notify_risk("limit_fallback",
+                "%s 涨跌停价获取失败，已按昨收×(1±%.0f%%)推算放行交易（估算价，%s）"
+                % (code, _rest2 * 100, _best2))
+        return round(last_close * (1 + _rest2), 2), round(last_close * (1 - _rest2), 2)
+    # 昨收也无法获取→维持原保守拒绝 + 停摆记录（原逻辑）
+    _LIMIT_STALL[code] = today
+    if _LIMIT_WARN.get(code) != today:
+        _LIMIT_WARN[code] = today
+        # P3-9 修复(2026-10-01)：告警升级——明确「该标的今日不会交易」的结论，
+        # 避免行情接口抖动导致静默停摆一天而无人察觉
+        log("[%s] 【涨跌停价获取失败】get_instrument_detail 与 tick 均未返回涨跌停价，"
+            "保守拒绝买卖：**该标的今日不会产生任何委托**（涨停不买/跌停不卖与未知价双拒）。"
+            "请检查客户端行情连接/合约信息下载；已按60s间隔定时重试，恢复后自动继续交易" % code)
+        _notify_risk("limit_stall", "%s 涨跌停价获取失败，已停摆（60s 定时重试中）" % code)
+    return up, dn
+
+
+def _sync_state_to_actual(C, acct, code, state, actual_vol, broker_avg, price):
+    """以券商实际持仓为准同步内部状态（外部买入/卖出/清仓），差异写日志。
+    （从 bar 顶部外部交易检测块抽取，供 bar 顶部与下单前校验共用。）
+    返回 True 表示「卖出在途特殊处理」，调用方需跳过 position_shares 覆盖，
+    否则返回 False/None（正常同步已完成）。
+    AUD14 修复(2026-10-04)：卖出冻结窗口过期且券商仍有持仓时，先查该标的当日
+    委托（_sell_order_status）——确认无活跃卖单（已废单/终结未完全成交）即按
+    实际持仓恢复状态（落到下方通用同步路径），不再无限延长冻结窗口死锁。"""
+    # R1 修复(2026-09-30 重审)：止盈卖出在途期间，券商持仓可能尚未更新（卖单未成交）。
+    # 此时 actual_vol > 0 不是外部买入，而是旧持仓未被卖单消化。若直接同步会把
+    # position_shares 复活为 actual，sell_pending_until 过期后 M2/M3 可加仓，
+    # 出现"挂着卖单同时加仓"的方向冲突。
+    #   - 窗口未过期：保持空仓等待成交，不复活持仓；
+    #   - 窗口已过期但 actual 仍 >0：先查券商委托——无活跃卖单则恢复，否则延长冻结。
+    _spu = state.get("sell_pending_until", 0.0)
+    # AUD65(2026-10-15)：保存原始持仓/成本，用于「外部手工清仓/减仓」盈亏记账。
+    _prev_pos = int(state.get("position_shares", 0) or 0)
+    _prev_cost = float(state.get("total_cost", 0.0) or 0.0)
+    _own_sell_pending = (_spu > time.time())   # 自身卖出在途：不记账（sell_all 已记）
+    if actual_vol > 0 and _spu > 0:
+        if time.time() < _spu:
+            _log_dup_guard(code, "止盈卖出在途(券商持仓%d股尚未被卖单消化)，保持空仓等待成交"
+                           % actual_vol)
+            return True
+        _sok, _sany, _sdetail = _sell_order_status(acct, code)
+        if _sok:
+            # 查询恢复：清零卖出在途查询失败计数
+            _SELL_PEND_QUERY_FAIL.pop(code, None)
+            if not _sany:
+                state["sell_pending_until"] = 0.0
+                log("【卖出在途恢复】%s 卖出冻结窗口已过期且委托确认无活跃卖单(%s)"
+                    "——卖单已废单/终结未完全成交，按实际持仓%d股恢复（成本基准按券商均价重算）；"
+                    "如需继续卖出请人工补单或核对废单原因"
+                    % (_cn(code), _sdetail, actual_vol))
+                # 不 return：落到下方通用同步路径重建持仓记录
+            else:
+                # 仍有活跃卖单/方向未知委托：延长冻结窗口，避免反向加仓；告警提示人工核查。
+                state["sell_pending_until"] = time.time() + _SELL_PENDING_TTL
+                log("【卖出在途告警】%s 止盈卖出在途窗口已过期但券商仍有%d股持仓，"
+                    "卖单仍活跃/方向未知(%s)，已延长冻结窗口%d秒，期间禁止加仓；"
+                    "请人工核查委托状态，必要时手动撤单"
+                    % (_cn(code), actual_vol, _sdetail, int(_SELL_PENDING_TTL)))
+                return True
+        else:
+            # AUD33(2026-10-08 零预设独立审计)：委托查询持续不可用时的兜底——原实现查询
+            # 不可用即无限延长冻结窗口：卖单实际已废单时标的进入「券商有仓、策略空转」卡死态，
+            # 既不再卖（内部空仓不触发止盈）也不再买（冻结窗口）。现连续失败达 3 次即按券商
+            # 实际持仓恢复（宁复活持仓等下一根 bar 重新决策，不永久冻结），并推送风险事件。
+            _fq = _SELL_PEND_QUERY_FAIL.get(code, 0) + 1
+            _SELL_PEND_QUERY_FAIL[code] = _fq
+            if _fq >= 3:
+                state["sell_pending_until"] = 0.0
+                log("【卖出在途恢复-查询不可用兜底】%s 卖单状态查询连续%d次不可用，"
+                    "按券商实际持仓%d股恢复内部状态（卖单是否废单请人工核对）；"
+                    "下一根 bar 将重新决策" % (_cn(code), _fq, actual_vol))
+                _notify_risk("sell_pending_recover",
+                             "%s 卖单查询连续不可用%d次，已按实际持仓%d股恢复"
+                             % (code, _fq, actual_vol))
+                # 不 return：落到下方通用同步路径重建持仓记录
+            else:
+                state["sell_pending_until"] = time.time() + _SELL_PENDING_TTL
+                log("【卖出在途告警】%s 卖单状态查询不可用(第%d次/3)，延长冻结窗口%d秒；"
+                    "连续3次后将按券商实际持仓恢复，请人工核查委托状态"
+                    % (_cn(code), _fq, int(_SELL_PENDING_TTL)))
+                return True
+    if actual_vol == 0:
+        # AUD65(2026-10-15)：手工卖出需计入盈亏账本。若此前内部有持仓且非自身卖出在途，
+        # 按传入现价×(1-卖出滑点) 生成保守成交价，调用 _pnl_record_close 记账，
+        # 计入 _PNL_HISTORY（含胜率、净到手、本次盈亏率%），日志标注「外部手工清仓」。
+        # 纯记账+日志，不修改 state、不参与买卖判断；任何异常静默忽略。
+        if _prev_pos > 0 and not _own_sell_pending:
+            try:
+                _sp = price * (1.0 - LIMIT_SLIP_PCT_SELL) if price > 0 else 0.0
+                _snap = dict(state)
+                _snap["position_shares"] = _prev_pos
+                _snap["total_cost"] = _prev_cost
+                if _sp > 0:
+                    _pnl_record_close(code, _prev_pos, _sp, _snap)
+                    log("[%s] 【手工清仓记账】外部检测到券商已清仓%d股，按保守成交价%.4f计入盈亏账本"
+                        % (_cn(code), _prev_pos, _sp))
+                else:
+                    log("[%s] 【手工清仓未记账】外部清仓但无有效现价，跳过盈亏记账(仅同步状态)"
+                        % _cn(code))
+            except Exception as _e65:
+                log("[%s] 【手工清仓记账异常】%s（仅日志，不影响状态同步）" % (_cn(code), _e65))
+        elif _own_sell_pending:
+            log("[%s] 券商清仓在自身卖出在途窗口内，盈亏已由 sell_all 记账，不重复计入" % _cn(code))
+        # 原地重置（不可重绑定：state 是 handlebar 传入的引用，见 2026-08-28 P1-1 修复）
+        # 2026-09-28 修复（4.1 补丁，回灌自单股版 v3/v8）：重置持仓态时必须保留「与持仓无关」的风控字段。
+        # 原实现 state.clear()+new_state() 会把下面两个字段一并清空：
+        #   stop_cooldown_until —— 止盈卖出后 STOP_COOLDOWN_DAYS 天内禁止开首仓（in_cooldown 依赖它）
+        #   firstpos_date       —— 每标的每日仅评估一次首仓（首仓分支依赖它）
+        # 二者被清 = 冷却失效 + 当日可重复评估首仓，与 08-28「重绑定丢冷却」同类。
+        # 关联风险：R1（重启丢在途单->重复下单）/ R2（止盈成交后冷却被清）两条 P0。
+        _keep_cd = state.get("stop_cooldown_until", "")
+        _keep_fpd = state.get("firstpos_date", "")
+        state.clear()
+        state.update(new_state())
+        if _keep_cd:
+            state["stop_cooldown_until"] = _keep_cd
+        if _keep_fpd:
+            state["firstpos_date"] = _keep_fpd
+        # 2026-09-24 13:03：超时结算后券商仍 0 股是预期路径，措辞区分避免误导排查；
+        # 真实外部卖出说明此前委托其实成交了 → 清零失败计数/熔断。
+        if time.time() - _LAST_SETTLE_TS.get(code, 0.0) < _PENDING_TTL + 10:
+            log("[%s] 在途单超时结算后券商仍为0股，持仓状态已重置"
+                "（重开首仓冷却至 %s，期间不重复下单）"
+                % (code, time.strftime("%H:%M:%S", time.localtime(_SETTLE_COOLDOWN.get(code, 0)))))
+        else:
+            log("[%s] 检测到外部清仓，策略状态已重置" % code)
+            _SETTLE_FAILS.pop(code, None)
+            _SETTLE_BREAKER.discard(code)
+            _SETTLE_BREAKER_DATE.pop(code, None)
+        return
+    if broker_avg > 0:
+        state["total_cost"] = actual_vol * broker_avg
+    elif price > 0:
+        state["total_cost"] = actual_vol * price
+    # AUD65(2026-10-15)：手工部分减仓(actual_vol>0 但少于内部记录且非自身卖出在途)
+    # 也需计入盈亏账本：按实际减少股数、保守成交价=现价×(1-卖出滑点) 调用 _pnl_record_close。
+    # 纯记账+日志，不参与买卖判断；任何异常静默忽略。
+    if (_prev_pos > actual_vol > 0) and not _own_sell_pending and price > 0:
+        try:
+            _sp = price * (1.0 - LIMIT_SLIP_PCT_SELL)
+            _red = _prev_pos - actual_vol
+            _snap = dict(state)
+            _snap["position_shares"] = _prev_pos
+            _snap["total_cost"] = _prev_cost
+            _pnl_record_close(code, _red, _sp, _snap)
+            log("[%s] 【手工减仓记账】外部检测到券商减仓%d股(原%d→现%d)，按保守成交价%.4f计入盈亏账本"
+                % (_cn(code), _red, _prev_pos, actual_vol, _sp))
+        except Exception as _e65b:
+            log("[%s] 【手工减仓记账异常】%s（仅日志，不影响状态同步）" % (_cn(code), _e65b))
+    # AUD34(2026-10-08 第二轮零预设审计)记录项：外部同步路径 deployed 按券商均价(不含费)折算，
+    # 与买入路径 compute_buy_cost 含费口径存在手续费差额；资金闸门另有「券商持仓市值」兜底
+    # (buy_shares 内 max 口径)，差额极小不影响安全，保持现状并固化说明。
+    state["deployed"] = state["total_cost"]
+    state["last_add_price"] = broker_avg if broker_avg > 0 else price
+    # AUD77(2026-10-19)：外部减仓后档位重置——原用 position_shares 判断，但此刻尚未更新，
+    #   永远取旧值，减仓后 tier 永不归零，导致下次金字塔加仓跳过本应补充的档位。
+    #   修法：用 _prev_pos（函数开头记录的原始内部持仓）与实际股数比较——
+    #   减仓(实际<原记录)时重置为首仓档，重新从第1档开始金字塔加仓；
+    #   未减仓/外部加仓则保持原档位（避免误重置导致重复加仓）。
+    if _prev_pos > actual_vol > 0:
+        state["tier"] = 0
+    else:
+        state["tier"] = 0 if state["position_shares"] == 0 else state["tier"]
+    # AUD67(2026-10-16)：stop_loss_pending 不再在外部同步里无条件清零——原实现
+    # 任何外部持仓变动（手工加仓/券商追踪/外部清仓）都会把"本轮回撤已告警过"
+    # 的节流标记清掉，下次回撤未过阈值时重复发风控告警。修法：删掉原行，
+    # 让主流程 check_stop_loss_alert 返回 False（价格回升到阈值下）时才清标记。
+    # 零行为变更（不碰铁律、不涉及买卖、只影响告警节流时机）。
+    # P4 留痕(2026-09-29 审计)：外部买入后档位基准按「混合成本」重置，写日志便于事后归因
+    # （M2 加仓时点会随该基准提前/推迟；共用账户的固有语义，非缺陷）。
+    log("[%s] 检测到外部交易，成本基准已重算(总成本=%.0f)；注意：加档基准 last_add_price=%.4f "
+        "为券商加权均价/市价的混合成本，金字塔加仓时点会据此重算"
+        % (code, state["total_cost"], state["last_add_price"]))
+    # 2026-10-01 P3-7：正常匹配（券商持仓>0 且同步成功）即视为交易链路恢复，
+    # 清零历史失败计数与熔断器——否则连续下单失败的熔断在恢复后永久残留，
+    # 后续真实异常（如连续废单）不再触发聚合告警。
+    _SETTLE_FAILS.pop(code, None)
+    _SETTLE_BREAKER.discard(code)
+    _SETTLE_BREAKER_DATE.pop(code, None)
+
+
+def verify_position_before_order(C, acct, code, state, side, price=0.0):
+    """下单前持仓校验闸门（2026-08-28；2026-09-24 修在途单语义）。
+    返回 (ok, actual_vol, can_use, reason)。ok=True 才允许继续下单；查询失败或发现
+    外部差异返回 False——差异场景已按实际持仓同步内部状态并写日志，本笔下单暂停，
+    下一根 bar 用干净状态重新决策。
+    2026-09-22：持仓查询走 innerApi get_trade_detail_data（见母版 query_position_safe）。
+
+    在途买单口径（2026-09-24）：expected = 内部认定的应持仓（含已下单成功部分），
+    pending = 其中尚未体现在券商持仓的部分，故账户可见股数应落在闭区间
+    [expected-pending, expected]。落在此区间内一律属正常过渡态，不得判为外部差异。
+    致命反例（当日实盘事故）：内部记录被误清零后 expected=0、pending=4700、actual=0，
+    原实现走 `actual == expected` 分支把 pending 清 0 并放行 → 每 3 秒重复买入 4700 股。
+    """
+    ok_q, actual, avg, can_use = query_position_safe(C, acct, code)
+    if not ok_q:
+        return False, 0, 0, "持仓查询失败"
+    expected = state.get("expected_shares", 0)
+    pending = _PENDING_BUYS.get(code, 0)
+    if pending > 0:
+        if actual == expected:
+            if actual > 0:
+                _pending_clear(code, "券商持仓已追平在途买单")
+                return True, actual, can_use, "一致"
+            # 「内部空仓 + 有在途买单」是矛盾态（状态被误重置的残留）。
+            # 必须拦截本次下单，且绝不可清零 pending——清零即等于拆掉本闸门。
+            return False, actual, can_use, (
+                "空仓内部记录与在途买单%d股矛盾，本次不下单" % pending)
+        elif expected - pending <= actual < expected:
+            _PENDING_BUYS[code] = expected - actual     # 部分成交，在途量收敛
+            # AUD71(2026-10-17)：收敛后立即刷新时间戳并落盘，与 _pending_add/_pending_clear
+            # 「写穿」行为对齐，防重启瞬间读到偏大的旧在途台账（零买卖行为变更）
+            _PENDING_TS[code] = time.time()
+            _pending_save()
+            return True, actual, can_use, "在途买单%d股可解释差额" % pending
+    elif actual == expected:
+        return True, actual, can_use, "一致"
+    if actual > expected:
+        detail = "实际%d股>内部记录%d股(多出%d股)" % (actual, expected, actual - expected)
+    else:
+        detail = "实际%d股<内部记录%d股(缺少%d股)" % (actual, expected, expected - actual)
+    log("【持仓校验】%s %s | 暂停本次%s下单，先按实际持仓同步内部状态" % (code, detail, side))
+    # AUD34(2026-10-08 第二轮零预设审计)：尊重 _sync_state_to_actual 返回值——返回 True 表示
+    # 「卖出在途特殊处理」须保持空仓、不复活内部持仓（原实现无条件覆盖，冻结窗口内状态复活后
+    # 止盈/涨停卖出可再次触发卖单，方向冲突）。仅正常同步时覆盖内部记录并清理在途。
+    _sync_handled = _sync_state_to_actual(C, acct, code, state, actual, avg, price)
+    if not _sync_handled:
+        state["position_shares"] = actual
+        state["expected_shares"] = actual
+        _pending_clear(code, "按实际持仓同步后重置在途记录")
+    return False, actual, can_use, detail
+
+
+def buy_shares(C, code, acct, price, vol, reason, state=None, cap=None):
+    """买入。下单前持仓校验（2026-08-28）：查询失败或与内部记录存在外部差异时
+    中止本笔下单（状态已按实际持仓同步并写日志，下一根 bar 重新决策）。
+    passorder 实参顺序对照 innerApi 文档（详见母版共享层注释）。
+    cap（2026-09-24）：单标的资金预算（元），传入即启用资金口径硬闸门。"""
+    vol = int(vol)
+    if vol <= 0:
+        return False
+    # AUD32(2026-10-07 铁律审计)：买入执行前统一输出「触发条件明细」——触发类型、
+    # 具体判断依据、相关参数值（仅日志，不改变下单/止损逻辑）。
+    _emit_trade("买入-" + reason, code, "BUY", vol, price,
+                {"委托价": price, "数量": vol, "限价滑点": LIMIT_SLIP_PCT,
+                 "标的预算": cap, "已部署": (state or {}).get("deployed", "?")},
+                "CHECK", "下单前置闸门待校验")
+    # 铁律守卫(2026-09-30)：只允许交易策略白名单内的标的；非策略标的一律拦截，绝不下单。
+    if not _is_strategy_stock(code):
+        log("【铁律拦截-非策略标的】%s 不在策略交易白名单内，拒绝买入委托(%s)"
+            % (_cn(code), reason))
+        _emit_trade("买入-" + reason, code, "BUY", vol, price, {"白名单": _is_strategy_stock(code)}, "BLOCK", "铁律拦截：非策略白名单标的，拒绝买入委托")
+        return False
+    # P3-6 修复(2026-10-01)：流动性/参与率闸门——单笔买入股数不超过近 20 根已收盘 bar
+    # 平均成交量的 max_participation_pct（默认 1%），防低流动性标的上单笔订单占当日
+    # 成交量显著比例（滑点与冲击成本失控）。平均量缺失（历史数据不足）时放行但告警。
+    # AUD2 修复(2026-10-03)：台账重建熔断期间暂停买入——券商委托查询连续失败时
+    # 无法确认是否仍有在途买单，此时开新买单有重复下单风险（与停牌/卖出在途闸同级）。
+    if code in _REBUILD_BREAKER:
+        if _diag_due(code):
+            log("[%s] 【台账重建熔断】券商委托查询连续失败，暂停新买入（卖出/止盈不受限）；"
+                "委托查询恢复自动解除(%s)" % (code, reason))
+        _emit_trade("买入-" + reason, code, "BUY", vol, price, {"重建熔断中": code in _REBUILD_BREAKER}, "BLOCK", "台账重建熔断：券商委托查询连续失败，暂停新买入")
+        return False
+    _avg_v = _AVG_VOL20.get(code, 0.0)      # 单位：手（日线 volume，用户确认口径）
+    if _avg_v > 0:
+    # AUD35(2026-10-08 第三轮零预设审计)：成交量单位是「手」——上限先换算成股(×100)再乘参与率，
+    # 否则上限被缩小 100 倍（日均100万手只放行1万股），正常买入被错误拦截。
+        _max_vol = int(_avg_v * 100.0 * PARAMS.get("max_participation_pct", 0.01))
+        if _max_vol > 0 and vol > _max_vol:
+            log("[%s] 【参与率闸门】本次买入%d股超过近20日均量%.0f手(≈%.0f股)的%.0f%%(上限%d股)，已拦截(%s)"
+                % (code, vol, _avg_v, _avg_v * 100.0, PARAMS.get("max_participation_pct", 0.01) * 100,
+                   _max_vol, reason))
+            _emit_trade("买入-" + reason, code, "BUY", vol, price, {"均量20": _avg_v, "参与率上限%": PARAMS.get("max_participation_pct", 0.01)*100, "本次股数": vol}, "BLOCK", "参与率闸门：本次买入超过近20日均量上限")
+            return False
+    elif _avg_v == 0 and PARAMS.get("max_participation_pct"):
+        # AUD56(2026-10-13，用户拍板 P4 方案A)：近20日均量为0 不再「永久堵死买入」。
+        # 能走到这里说明：逐标的数据门已确认 65 根日线齐全（P2）、当下 tick 有量
+        # （真停牌已被主流程「连续3根零量」启发式挡在前面）、持仓/台账闸门均未拦——
+        # 近20根已收盘bar却全被零量/零价剔光，实际只可能是数据源缺量/脏数据。
+        # 处理：跳过参与率闸门，交后续闸门（卖出在途/在途买单/持仓三方对账/
+        # 资金硬上限 cap/涨停笼子）继续把关；每日每标的推一次风控告警提醒人工核对。
+        _pzk = datetime.now().strftime("%Y-%m-%d")
+        if _PARTICIP_ZERO_ALERT.get(code) != _pzk:
+            _PARTICIP_ZERO_ALERT[code] = _pzk
+            try:
+                _notify_risk("particip_zero_vol",
+                             "%s 近20日已收盘K线均量为0（疑似数据源缺量/零价清洗剔光）；"
+                             "本笔买入跳过参与率闸门，由资金硬上限等其余闸门把关，请人工核对QMT日线数据"
+                             % code)
+            except Exception:
+                pass
+        if _diag_due(code):
+            log("[%s] 参与率闸门跳过 | 近20日均量为0（数据门已确认日线齐全且当下tick有量，"
+                "疑似数据源缺量）；本次不拦截，交资金硬上限等其余闸门把关，已推风控告警(%s)"
+                % (code, reason))
+    # 卖出在途互斥闸门(2026-09-30)：止盈卖单提交后 180s 冻结窗口内，禁止任何买入路径
+    # （首仓/续批/M2金字塔/M3阶梯统一在此拦截），避免"挂着卖单同时反向买入"的方向冲突。
+    # sell_pending_until 随状态落盘，重启不丢；卖单成交(actual==0)后状态重置自然解除。
+    if state is not None and time.time() < state.get("sell_pending_until", 0.0):
+        _log_dup_guard(code, "止盈卖出在途(未确认落账)，禁止买入(%s)" % reason)
+        _emit_trade("买入-" + reason, code, "BUY", vol, price, {"卖出冻结至": state.get("sell_pending_until", 0.0)}, "BLOCK", "卖出在途互斥：止盈卖单未确认落账，禁止买入")
+        return False
+    if state is not None:
+        # 在途买单硬闸门（2026-09-24）——防重复下单的最后一道防线。
+        # 仅拦截「内部空仓 + 有在途买单」这一自相矛盾态（状态被误重置后的残留）：
+        # 此时若放行，就是每 3 秒重复开首仓的实盘事故。正常的同根 bar 多通道加仓
+        # （M2 金字塔 + M3 阶梯）内部记录非空，不受此闸门影响，否则会误伤合法下单。
+        _pd = _PENDING_BUYS.get(code, 0)
+        if _pd > 0 and state.get("position_shares", 0) == 0:
+            _log_dup_guard(code, "空仓内部记录与在途买单%d股矛盾，本次不下新买单(%s)"
+                           % (_pd, reason))
+            _emit_trade("买入-" + reason, code, "BUY", vol, price, {"在途买单": _pd, "内部持仓": state.get("position_shares", 0)}, "BLOCK", "在途买单硬闸门：内部空仓与在途买单矛盾，不重新下单")
+            return False
+        ok_v, _a, _c, why = verify_position_before_order(C, acct, code, state, "买入", price)
+        if not ok_v:
+            log("【持仓校验】%s 买入委托中止(%s)" % (_cn(code), why))
+            _emit_trade("买入-" + reason, code, "BUY", vol, price, {}, "BLOCK", "持仓校验中止：%s" % why)
+            return False
+        # 资金口径硬闸门（2026-09-24）——在调用点闸门之上再加最后一道防线。
+        # 以「状态已部署额」与「券商持仓成本市值」的较大者计量已用额度，防止状态文件
+        # 被删/漂移后重新获得全额额度而突破单标的预算。实盘账户可用资金远大于策略预算
+        # （如可用396万 / 预算20万）时，仅靠调用点闸门不足以保证不超预算。
+        if cap is not None:
+            _used = float(state.get("deployed", 0.0) or 0.0)
+            try:
+                _okq, _pv, _apx, _cu = query_position_safe(C, acct, code)
+                if _okq and _pv > 0 and _apx and _apx > 0:
+                    _used = max(_used, float(_pv) * float(_apx))
+            except Exception:
+                pass
+            if _used + vol * price > float(cap) + 1e-6:
+                log("【资金口径闸门】%s 本次买入%d股(%.0f元)后已用额度将达%.0f元，"
+                    "超过单标的预算%.0f元，已拦截(%s)"
+                    % (_cn(code), vol, vol * price, _used + vol * price, cap, reason))
+                _emit_trade("买入-" + reason, code, "BUY", vol, price, {"已用额度": _used, "本次金额": vol*price, "标的预算": cap}, "BLOCK", "资金口径闸门：下单后将超单标的预算")
+                return False
+    # 限价模式(11)：按最新价上浮 LIMIT_SLIP_PCT 挂限价单；对手价模式(14)：规范传 0
+    order_price = round(price * (1 + LIMIT_SLIP_PCT), 2) if PRICE_TYPE == 11 else 0
+    # AUD33(2026-10-08 零预设独立审计)：价格笼子自检——A股限价申报价不得高于涨停价，
+    # 接近涨停时上浮挂单价(现价×1.003)越过涨停价必被柜台拒单（触发900s买入冷却+熔断计数）。
+    # 现价已=涨停价（一字板）直接拦截；其余越界钳制到涨停价（合法申报）。
+    if PRICE_TYPE == 11 and order_price > 0:
+        try:
+            _up_c, _dn_c = get_limit_prices_safe(C, code)
+        except Exception:
+            _up_c, _dn_c = 0.0, 0.0
+        if _up_c > 0:
+            if price >= _up_c:
+                log("【价格笼子拦截】%s 现价%.2f已>=涨停价%.2f，禁止买入(%s)"
+                    % (_cn(code), price, _up_c, reason))
+                _emit_trade("买入-" + reason, code, "BUY", vol, price,
+                            {"现价": price, "涨停价": _up_c}, "BLOCK",
+                            "价格笼子：现价已达涨停价，禁止买入")
+                return False
+            if order_price > _up_c:
+                order_price = round(_up_c, 2)
+    _pt = "限价" if PRICE_TYPE == 11 else "对手价"
+    try:
+        # QMT passorder 返回值：0 或正整数=成功(委托序号)，-1=失败。
+        # 之前只 catch 异常不检查返回值，导致委托被券商拒/静默失败时仍登记 pending，
+        # 实盘 2026-09-25 11:26 事故：passorder 返回 -1 但代码以为成功，在途单永远等不到成交。
+        _ret = passorder(OP_BUY, ORDER_TYPE, acct, code, PRICE_TYPE, order_price, vol,
+                         "native_buy", QUICK_TRADE, "", C)
+        if _ret is None or _ret < 0:
+            log("【下单失败(买入)】%s passorder 返回 %s | %d股(%s,限价%.2f) | %s"
+                % (_cn(code), ("None" if _ret is None else _ret), vol, _pt, order_price or price, reason))
+            _emit_trade("买入-" + reason, code, "BUY", vol, price, {"passorder返回": _ret, "委托价": order_price or price}, "FAIL", "passorder 未返回委托序号(None/负值)，委托状态未知")
+            return False
+        _pending_add(code, vol)   # 登记在途买单（含时间戳，供超时结算）
+        # 2026-09-30：隐藏可用资金信息，仅保留买入数量与价格
+        log("【买入】%s %d股(%s,限价%.2f) | %s | passorder=%s"
+            % (_cn(code), vol, _pt, order_price or price, reason, _ret))
+        # AUD32(2026-10-07 铁律审计)：买入成交确认——触发类型 + 实际参数 + 结论。
+        _emit_trade("买入-" + reason, code, "BUY", vol, price,
+                    {"委托价": order_price or price, "数量": vol, "限价滑点": LIMIT_SLIP_PCT,
+                     "在途买单": _PENDING_BUYS.get(code, 0), "委托类型": _pt,
+                     "passorder": _ret}, "SEND", "passorder 返回 %s" % _ret)
+        return True
+    except Exception as e:
+        log("下单异常(买入): %s" % e)
+        # 2026-10-01 P2-4：连续下单失败聚合告警（对齐母版 _bump_order_fail，防静默失败）
+        _bump_order_fail(code, "买入异常 %s" % e)
+        _emit_trade("买入-" + reason, code, "BUY", vol, price, {}, "FAIL", "下单异常：%s" % e)
+        return False
+
+
+def sell_all(C, code, acct, price, reason, state=None):
+    """全部卖出（按当日可卖量 m_nCanUseVolume，T+1 当日买入未到账股份不委托）。
+    下单前持仓校验（2026-08-28）：查询失败/外部差异 -> 中止本笔（先同步下根bar再试）；
+    可卖量不足 -> 跳过或按可卖量调整，避免整单被券商拒绝。"""
+    # AUD32(2026-10-07 铁律审计)：卖出执行前统一输出「触发条件明细」——触发类型、
+    # 具体判断依据、相关参数值（仅日志，不改变下单/止损逻辑）。
+    _emit_trade("卖出-" + reason, code, "SELL", (state or {}).get("position_shares", 0), price,
+                {"委托价": price, "卖出滑点": LIMIT_SLIP_PCT_SELL,
+                 "持仓股数": (state or {}).get("position_shares", "?")},
+                "CHECK", "下单前置闸门待校验")
+    # 铁律守卫(2026-09-30)：只允许交易策略白名单内的标的；非策略标的一律拦截，绝不下单。
+    if not _is_strategy_stock(code):
+        log("【铁律拦截-非策略标的】%s 不在策略交易白名单内，拒绝卖出委托(%s)"
+            % (_cn(code), reason))
+        _emit_trade("卖出-" + reason, code, "SELL", 0, price, {"白名单": _is_strategy_stock(code)},
+                    "BLOCK", "铁律拦截：非策略白名单标的，拒绝卖出委托")
+        return False
+    if state is not None:
+        ok_v, pos_vol, can_use, why = verify_position_before_order(C, acct, code, state, "卖出", price)
+        if not ok_v:
+            log("【持仓校验】%s 卖出委托中止(%s)" % (_cn(code), why))
+            _emit_trade("卖出-" + reason, code, "SELL", 0, price, {}, "BLOCK", "持仓校验中止：%s" % why)
+            return False
+        # R1 兜底(2026-09-29 审计修复)：任何卖出路径在持仓校验通过后，再次复核盈亏。
+        # verify_position_before_order 只校验股数/可卖量，不判盈亏；此处为亏损不卖红线的
+        # 最后一道闸门，防止上层调用方漏判 pnl_pct 直接调用 sell_all。
+        _pos_s = state.get("position_shares", 0)
+        _cost_s = state.get("total_cost", 0)
+        if _pos_s > 0 and _cost_s > 0:
+            # AUD33(2026-10-08 零预设独立审计)：与止盈净到手口径统一——卖出费用
+            # (印花税0.05%+佣金万0.841最低5元)从市值扣除后再判盈亏，杜绝「毛盈亏≈0
+            # 卖出后实际净亏手续费」的临界场景（铁律「不赚钱不卖」字面收紧）。
+            # AUD34(2026-10-08 第二轮零预设审计)：补扣过户费(mv×0.00001，与止盈
+            # should_take_profit 同费率口径)；拦截条件收紧为净到手<=成本一律拒绝——
+            # 确保卖出的股票都是赚钱的（扣完所有费用后仍盈利才允许卖出）。
+            # AUD36(2026-10-08 第四轮零预设独立审计)：铁律边界收紧——原按「现价」判净到手，
+            # 而实际限价卖出挂单价=现价×(1-卖出滑点0.003)，移动止盈在「刚转盈」临界区
+            # (浮盈0~0.3%)时可能「按现价算赚、按挂单价成交倒亏」，违反「不赚钱不卖」铁律。
+            # 现改为按最保守成交价(卖出挂单价)计算净到手，只有按最差成交价仍盈利才允许卖出。
+            _ref_px = round(price * (1 - LIMIT_SLIP_PCT_SELL), 2) if PRICE_TYPE == 11 else price
+            if _ref_px <= 0:
+                _ref_px = price
+            _mv_s = _ref_px * _pos_s
+            _sell_comm_s = max(_mv_s * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN)
+            _sell_stamp_s = _mv_s * STOCK_STAMP_TAX_RATE
+            _sell_transfer_s = _mv_s * STOCK_TRANSFER_FEE_RATE
+            _net_mv_s = _mv_s - _sell_comm_s - _sell_stamp_s - _sell_transfer_s
+            _pnl_pct_s = (_net_mv_s - _cost_s) / _cost_s
+            if _pnl_pct_s <= 0:
+                log("【R1拦截-不赚钱不卖】%s 持仓%d股@成本%.0f 保守成交价%.2f(现价%.2f) 净到手%.2f%%(扣费后，须>0才卖)，拒绝卖出(%s)"
+                    % (_cn(code), _pos_s, _cost_s, _ref_px, price, _pnl_pct_s * 100, reason))
+                _emit_trade("卖出-" + reason, code, "SELL", _pos_s, price, {"持仓": _pos_s, "成本": _cost_s, "现价": price, "保守成交价": _ref_px, "浮盈%": round(_pnl_pct_s*100,2)}, "BLOCK", "R1拦截：不赚钱不卖红线（净到手口径，按保守成交价），拒绝卖出")
+                return False
+    else:
+        # AUD55(2026-10-13)：原实现只查持仓与可卖量、不判盈亏，是「不赚钱不卖」铁律的后门
+        # （将来若新增调用点漏传 state，浮亏也会被卖出）。改为直接拒绝——宁可拒卖，
+        # 也不给铁律开后门。当前全部调用点都传了 state，本分支不可达，属防御性加固。
+        log("【R1拦截-缺少持仓状态】%s 未提供 state，无法复核净到手盈亏，拒绝卖出(%s)"
+            % (_cn(code), reason))
+        _emit_trade("卖出-" + reason, code, "SELL", 0, price, {}, "BLOCK",
+                    "R1拦截：未提供持仓状态，无法复核盈亏，拒绝卖出")
+        return False
+    vol = int(can_use)
+    if pos_vol > 0 and vol <= 0:
+        log("【T+1限制】%s 持仓%d股但当日可卖为0，本次不卖，剩余股份次日自动重试" % (_cn(code), pos_vol))
+        _emit_trade("卖出-" + reason, code, "SELL", pos_vol, price, {"总持仓": pos_vol, "可卖": vol}, "BLOCK", "T+1限制：当日可卖量为0")
+        return False
+    if vol <= 0:
+        log("无可卖持仓")
+        _emit_trade("卖出-" + reason, code, "SELL", 0, price, {}, "BLOCK", "无可用持仓可卖")
+        return False
+    if vol < pos_vol:
+        log("【T+1限制】%s 可卖%d股<总持仓%d股，按可卖量下单" % (_cn(code), vol, pos_vol))
+    # 限价模式(11)：按最新价下浮 LIMIT_SLIP_PCT_SELL 挂限价单（2026-09-29 审计修复 P2：
+    # 卖侧独立滑点，压低挂单价以提高成交率）；对手价模式(14)：规范传 0
+    order_price = round(price * (1 - LIMIT_SLIP_PCT_SELL), 2) if PRICE_TYPE == 11 else 0
+    # AUD33(2026-10-08 零预设独立审计)：价格笼子自检（卖出侧）——A股限价申报价不得低于
+    # 跌停价，接近跌停时下浮挂单价(现价×0.997)越过跌停价必被柜台拒单（止盈错过成交窗口）。
+    # 现价已=跌停价直接拦截（跌停不卖）；其余越界钳制到跌停价（合法申报）。
+    if PRICE_TYPE == 11 and order_price > 0:
+        try:
+            _up_s, _dn_s = get_limit_prices_safe(C, code)
+        except Exception:
+            _up_s, _dn_s = 0.0, 0.0
+        if _dn_s > 0:
+            if price <= _dn_s:
+                log("【价格笼子拦截】%s 现价%.2f已<=跌停价%.2f，禁止卖出(%s)"
+                    % (_cn(code), price, _dn_s, reason))
+                _emit_trade("卖出-" + reason, code, "SELL", vol, price,
+                            {"现价": price, "跌停价": _dn_s}, "BLOCK",
+                            "价格笼子：现价已达跌停价，禁止卖出")
+                return False
+            if order_price < _dn_s:
+                order_price = round(_dn_s, 2)
+    _pt = "限价" if PRICE_TYPE == 11 else "对手价"
+    try:
+        _ret = passorder(OP_SELL, ORDER_TYPE, acct, code, PRICE_TYPE, order_price, vol,
+                         "native_sell", QUICK_TRADE, "", C)
+        if _ret is None or _ret < 0:
+            log("【下单失败(卖出)】%s passorder 返回 %s | %d股(%s,限价%.2f) | %s"
+                % (_cn(code), ("None" if _ret is None else _ret), vol, _pt, order_price or price, reason))
+            _emit_trade("卖出-" + reason, code, "SELL", vol, price, {"passorder返回": _ret, "委托价": order_price or price}, "FAIL", "passorder 未返回委托序号(None/负值)，委托状态未知")
+            return False
+        log("【卖出】%s %d股(%s,限价%.2f) | %s | passorder=%s"
+            % (_cn(code), vol, _pt, order_price or price, reason, _ret))
+        # AUD32(2026-10-07 铁律审计)：卖出成交确认——触发类型 + 实际参数 + 结论。
+        _emit_trade("卖出-" + reason, code, "SELL", vol, price,
+                    {"委托价": order_price or price, "数量": vol, "卖出滑点": LIMIT_SLIP_PCT_SELL,
+                     "委托类型": _pt, "passorder": _ret}, "SEND", "passorder 返回 %s" % _ret)
+        # AUD59(2026-10-14)：卖出下单成功即记账——按保守成交价(order_price)×vol 扣卖出三费
+        # 后减按比例折算的持仓成本，得本次净到手盈亏；累计到 _PNL_HISTORY 并落盘持久化。
+        # 仅记账+日志，不改 state、不参与任何买卖判断，铁律零触碰；任何异常静默忽略。
+        try:
+            _pnl_record_close(code, vol, order_price or price, state)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        log("下单异常(卖出): %s" % e)
+        # 2026-10-01 P2-4：连续下单失败聚合告警（对齐母版 _bump_order_fail，防静默失败）
+        _bump_order_fail(code, "卖出异常 %s" % e)
+        _emit_trade("卖出-" + reason, code, "SELL", vol, price, {}, "FAIL", "下单异常：%s" % e)
+        return False
+
+
+# ---- AUD12 修复(2026-10-04)：回放闸 ------------------------------------------
+# 背景：多标的交付件移除 is_last_bar 门控后，历史回放（warm-up）bar 的下单防护
+# 完全依赖 quickTrade=1 的版本语义 + 状态幂等。实测 QMT 启动会以每秒数十次回调
+# 历史回放 bar，且交易日/时段门控用的是真实时钟——盘中重启时回放的「当日历史
+# bar」全部放行，会重放交易决策（幽灵在途台账/状态漂移/冷却误触发；个别版本
+# quickTrade=1 在回放 bar 上仍发单则为真实重复委托）。
+# 规则：bar 时间戳落后真实时钟 > _REPLAY_TOL_SEC 判为回放 bar，跳过全部交易逻辑；
+# 日线周期的当日 0 点戳（lag 必然大于容差）识别后放行，避免误伤非 1 分钟周期。
+# AUD56(2026-10-13，用户拍板 P3)：get_bar_timetag/barpos 不可用或年份越界时
+# 由 fail-open 放行改为 fail-closed 拦下——拿不准本 bar 是否历史回放，宁可跳过
+# 本根 bar 全部交易逻辑也不发委托；每 60 秒一条醒目日志 + 一次风控事件防 API
+# 异常误伤实盘（replay_gate_timetag_unavailable）。
+# 位置注意：必须定义在「9. 盘中阶梯加仓」(intraday_add 函数) 之前——生成器以该
+# 函数的定义行为起点、以「10. 主逻辑」注释为终点做整段替换，凡定义在该区间内的
+# 函数都会被静默吞掉（AUD18 断言曾拦截此事故，勿把回放闸挪回主逻辑段前）。
+_REPLAY_TOL_SEC = 120.0
+# AUD43(2026-10-04 零预设独立审计)：冷启动与短时风暴双保险。
+# 背景：移除 is_last_bar 后，QMT 启动时以每秒数十次回调历史回放 bar，原回放闸
+#       依赖 get_bar_timetag 时间戳；该接口异常时会 fail-open 放行所有 bar。
+# 本保险不改动原回放闸判定逻辑，仅在 _is_replay_bar 之上叠加两道独立保护：
+#   (1) 冷启动护栏：每次启动后的前 _REPLAY_COLD_START_BARS 根 bar 一律只记录不下单
+#       （无论是否被判为回放 bar），给行情/时钟/台账一个稳定窗口。
+#   (2) 短时风暴熔断：若在 _REPLAY_STORM_WINDOW 秒内 handlebar 被调用次数超过
+#       _REPLAY_STORM_MAX，判为高速回放历史 K 线（而非真实逐秒行情），触发临时暂停，
+#       待回调频率回落到正常水平后自动解除，避免对真实行情误伤。
+_REPLAY_COLD_START_BARS = 30      # 启动后前 N 根 bar 只记录不下单（覆盖启动回放窗口）
+_REPLAY_COLD_START_SEC = 180.0   # AUD77(2026-10-19)：冷启动护栏加时间上限——N 根 bar 或该秒数「取先到」
+                                      # 启动回放通常几秒即完，若 3 分钟内已累计 30 根即解除；
+                                      # 若 3 分钟仍未满 30 根（如盘前启动、低波动时段），也解除，
+                                      # 避免错过当日首仓窗口（用户拍板 2026-10-19）。
+_REPLAY_STORM_WINDOW = 5.0        # 风暴判定窗口（秒）
+_REPLAY_STORM_MAX = 60            # 窗口内最大允许 bar 数（真实 1 分钟 bar 远低于此）
+_REPLAY_STORM_QUIET = 5.0         # 风暴触发后，连续 N 秒回调频率正常才解除暂停
+_REPLAY_STATE = {
+    "warned_api": False, "last_block_log": 0.0,
+    "proc_start_ts": 0.0,          # 进程启动时间戳（首次 handlebar 时置位）
+    "cold_bars": 0,                # 冷启动护栏内已处理的 bar 计数
+    "cold_warned": False,          # 冷启动护栏启动日志去重
+    "cold_released": False,        # AUD62：冷启动护栏解除日志去重（仅打印一次）
+    "bar_ts_list": [],             # 短时风暴判定用：窗口内最近 handlebar 时间戳列表
+    "storm_triggered": False,      # 是否已触发短时风暴熔断
+    "storm_ts": 0.0,               # 风暴熔断触发时间戳
+    "storm_quiet_since": 0.0,      # 回调频率回落开始时间（用于解除判定）
+}
+
+
+def _is_replay_bar(C, count=True):
+    """回放闸：返回 True 表示本 bar 为历史回放 bar，调用方必须跳过全部交易逻辑。
+
+    count=False 时只做时间戳判定、不累计冷启动/风暴计数——供半时诊断/盈亏汇总等纯日志
+    函数调用（AUD68：原实现中这些日志函数也调本函数，冷启动护栏 bar 计数被多计一倍，
+    30 根护栏实际只覆盖约 15 根真实 bar）。
+
+    AUD43(2026-10-04 零预设独立审计)：在原有时间戳回放闸之上，叠加两道独立保险——
+      (1) 冷启动护栏：每次启动后的前 _REPLAY_COLD_START_BARS 根 bar 一律只记录不下单。
+          QMT 启动时通常以每秒数十次回调历史回放 bar；冷启动护栏可覆盖绝大多数启动回放场景。
+      AUD56(2026-10-13，用户拍板 P3)：时间戳 API 不可用/年份越界时由 fail-open 放行
+          改为 fail-closed 拦下——拿不准就不发委托，并推风控事件防 API 异常误伤实盘。
+      (2) 短时风暴熔断：维护最近 _REPLAY_STORM_WINDOW 秒内的 bar 回调时间戳，若数量
+          超过 _REPLAY_STORM_MAX（真实逐秒行情绝无可能达到），判定为历史 K 线高速回放，
+          触发临时暂停；待回调频率连续 _REPLAY_STORM_QUIET 秒回落到正常水平后自动解除，
+          避免对真实行情误伤。
+    两道保险均不改变下方原有时间戳回放闸的判定逻辑，只在它之上前置拦截。
+    """
+    _now = time.time()
+    # ---- 进程启动时间戳：首次调用时置位（用于冷启动护栏判定）----
+    if not _REPLAY_STATE["proc_start_ts"]:
+        _REPLAY_STATE["proc_start_ts"] = _now
+    # ---- (1) 冷启动护栏：启动后前 N 根 bar 一律只记录不下单 ----
+    # AUD77(2026-10-19)：冷启动护栏改「N 根 bar 或 N 秒取先到」——原实现只数 bar，
+    #   启动回放未达 30 根（如盘前启动、低波动时段）时整日卡在护栏内错过首仓窗口。
+    _cold_start = _now - _REPLAY_STATE.get("proc_start_ts", _now)
+    _cold_timeout = (_cold_start >= _REPLAY_COLD_START_SEC)
+    if count and _REPLAY_STATE["cold_bars"] < _REPLAY_COLD_START_BARS and not _cold_timeout:
+        _REPLAY_STATE["cold_bars"] += 1
+        if not _REPLAY_STATE["cold_warned"]:
+            _REPLAY_STATE["cold_warned"] = True
+            try:
+                log("回放闸·冷启动护栏 | 启动后前%d根bar 或 %d秒(取先到)一律只记录不下单，"
+                    "规避QMT启动回放历史K线可能触发的重复委托（AUD43/AUD77）"
+                    % (_REPLAY_COLD_START_BARS, int(_REPLAY_COLD_START_SEC)))
+            except Exception:
+                pass
+        return True
+    # AUD62：前 N 根 bar 已全部拦截；第 N+1 次进入时仅打印一次解除日志。
+    # 注意：cold_bars 统计的是 handlebar 实际回调，可能包含 QMT 启动回放的历史 bar，
+    # 因此解除时刻不等同于开盘后固定等待 N 分钟。本增强只写日志，不改变任何门控判断。
+    if not _REPLAY_STATE["cold_released"]:
+        _REPLAY_STATE["cold_released"] = True
+        try:
+            _release_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(_now))
+            # AUD77(2026-10-19)：解除原因分两种——根数先到(累计满30根)或时间先到(启动超3分钟)。
+            #   原日志只写累计根数，盘前/低波动时段因超时解除时看不到原因，易误以为护栏未生效。
+            _cold_reason = ("累计%d根bar已达上限" % _REPLAY_STATE["cold_bars"]
+                            if _REPLAY_STATE["cold_bars"] >= _REPLAY_COLD_START_BARS
+                            else "启动已超%d秒但未满%d根bar" % (int(_REPLAY_COLD_START_SEC), _REPLAY_COLD_START_BARS))
+            log("回放闸·冷启动护栏解除 | %s | 解除时间=%s | 实盘委托恢复（AUD62/AUD77）"
+                % (_cold_reason, _release_at))
+        except Exception:
+            pass
+    # ---- (2) 短时风暴熔断：维护窗口内回调时间戳，检测高速回放 ----
+    _tl = _REPLAY_STATE["bar_ts_list"]
+    if count:
+        _tl.append(_now)
+    # 仅保留最近 _REPLAY_STORM_WINDOW 秒内的记录
+    while _tl and (_now - _tl[0]) > _REPLAY_STORM_WINDOW:
+        _tl.pop(0)
+    _burst = len(_tl)
+    if _REPLAY_STATE["storm_triggered"]:
+        # 已触发风暴熔断：等待回调频率回落；连续 _REPLAY_STORM_QUIET 秒 <= _REPLAY_STORM_MAX
+        # 才解除（真实行情下窗口内 bar 数远低于上限）。
+        _q = _REPLAY_STATE.get("storm_quiet_since", 0.0)
+        if _burst <= _REPLAY_STORM_MAX:
+            if not _q:
+                _REPLAY_STATE["storm_quiet_since"] = _now
+            elif (_now - _q) >= _REPLAY_STORM_QUIET:
+                _REPLAY_STATE["storm_triggered"] = False
+                _REPLAY_STATE["storm_quiet_since"] = 0.0
+                _REPLAY_STATE["bar_ts_list"] = []
+                try:
+                    log("回放闸·风暴熔断解除 | 回调频率已回落，恢复交易判定（AUD43）")
+                except Exception:
+                    pass
+        else:
+            _REPLAY_STATE["storm_quiet_since"] = 0.0
+        if _REPLAY_STATE["storm_triggered"]:
+            if _now - _REPLAY_STATE["storm_ts"] >= 60.0:
+                _REPLAY_STATE["storm_ts"] = _now
+                try:
+                    log("回放闸·风暴熔断 | %.0f秒内回调%d根bar，判定历史K线高速回放，"
+                        "暂停下单；待回调频率回落自动恢复（AUD43）"
+                        % (_REPLAY_STORM_WINDOW, _burst))
+                except Exception:
+                    pass
+            return True
+    else:
+        if _burst > _REPLAY_STORM_MAX:
+            _REPLAY_STATE["storm_triggered"] = True
+            _REPLAY_STATE["storm_ts"] = _now
+            _REPLAY_STATE["storm_quiet_since"] = 0.0
+            try:
+                log("回放闸·风暴熔断 | %.0f秒内回调%d根bar，判定历史K线高速回放，"
+                    "触发临时暂停；待回调频率回落自动恢复（AUD43）"
+                    % (_REPLAY_STORM_WINDOW, _burst))
+            except Exception:
+                pass
+            return True
+    try:
+        _ms = C.get_bar_timetag(C.barpos)
+        _bar_dt = datetime.fromtimestamp(float(_ms) / 1000.0)
+        # AUD22(2026-10-05)：时间戳合理性兜底——个别 QMT 版本可能返回秒(而非毫秒)
+        # 或异常取值，解析出的年份不在合理区间时视为「时间不可用」。
+        # AUD56(2026-10-13，用户拍板 P3)：由 fail-open 放行改为 fail-closed 拦下——
+        # 拿不准本 bar 是不是历史回放时，宁可跳过本根 bar 全部交易逻辑也不发委托；
+        # 每 60 秒一条醒目日志 + 一次风控事件，实盘若持续出现即 API 异常，需人工介入。
+        if not (2000 <= _bar_dt.year <= 2100):
+            raise ValueError("bar timetag year=%d out of range" % _bar_dt.year)
+    except Exception as e:
+        _t = time.time()
+        if _t - _REPLAY_STATE.get("last_apifail_log", 0.0) >= 60.0:
+            _REPLAY_STATE["last_apifail_log"] = _t
+            log("回放闸拦截(fail-closed) | get_bar_timetag/barpos/时间戳不可用(%s: %s)——"
+                "无法确认本bar是否历史回放，按保守口径跳过全部交易逻辑；"
+                "若实盘时段持续出现此提示，说明行情API异常需人工检查（AUD56）"
+                % (e.__class__.__name__, e))
+            try:
+                _notify_risk("replay_gate_timetag_unavailable",
+                             "回放闸时间戳API不可用，已按fail-closed拦下全部交易；"
+                             "实盘持续出现需人工检查行情API（AUD56）")
+            except Exception:
+                pass
+        return True
+    try:
+        _lag = (datetime.now() - _bar_dt).total_seconds()
+    except Exception:
+        # AUD56：时间差计算失败同样按 fail-closed 拦下（拿不准就不发委托）
+        _t = time.time()
+        if _t - _REPLAY_STATE.get("last_apifail_log", 0.0) >= 60.0:
+            _REPLAY_STATE["last_apifail_log"] = _t
+            log("回放闸拦截(fail-closed) | bar时间差计算失败——跳过全部交易逻辑（AUD56）")
+        return True
+    if _lag <= _REPLAY_TOL_SEC:
+        return False
+    # 日线周期的当日 bar 常以 0 点为时间戳：非回放，放行（仅限当日 0 点戳）
+    if _bar_dt.hour == 0 and _bar_dt.minute == 0 \
+            and _bar_dt.date() == datetime.now().date():
+        return False
+    # 2026-10-08 降噪：历史日期的回放（QMT 启动时正常回放历史 K 线）静默，不打日志；仅当日 bar 延迟才打日志提醒。
+    # 跳过交易逻辑不变（return True 仍然执行，保障安全防护），仅调整日志是否打印。
+    _is_today = (_bar_dt.date() == datetime.now().date())
+    _t = time.time()
+    if _is_today and _t - _REPLAY_STATE["last_block_log"] >= 60.0:
+        _REPLAY_STATE["last_block_log"] = _t
+        log("回放闸拦截 | bar时间=%s 落后时钟%.0fs>%.0fs，判定回放bar（当日延迟），"
+            "跳过全部交易逻辑" % (_bar_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                                  _lag, _REPLAY_TOL_SEC))
+    return True
+def intraday_add(C, code, acct, state, price, open_px, cash, params=PARAMS, cfg=None, up=0.0,
+                 sent_scale=1.0, sent_block=False):
+    """盘中阶梯加仓（M3）：相对当日开盘价每跌一档加一档金额，每日每档 1 次。
+    P1 修复(2026-08-28)：补齐「涨停不买」与「单标的 capital_cap 硬上限」两道闸门，
+    与首仓/M2 同口径；此前仅受单日额度约束，金字塔满档后多日累计可突破硬上限。
+    P1-4 修复(2026-10-01)：软暂停判定移入档位循环——原实现只在入口判一次，
+    单根 bar 相对开盘跌幅跨越全部 4 档时（暴跌/逼近跌停路径）一次加满 4 档
+    （对抗测试复现：-11% 单 bar 投入 21360 元 > 软暂停阈值 2 档约 10680 元），
+    「极端暴跌日不再机械加满」的设计意图在暴跌日恰好失效。
+    P2-4 修复(2026-10-01)：软暂停日志按 _diag_due 60s 节流（原实现软暂停后
+    剩余每根 bar 都打一行日志 + 原子写盘一次）。
+    P3-5 修复(2026-10-01)：单档金额不足 1 手价时补 1 手兜底（受档位预算约束），
+    并在 vol==0 时按节流打印原因——此前高价股 M3 永久静默失效无任何线索。"""
+    if not open_px or open_px <= 0:
+        return
+    # AUD72：情绪门拦截 M3 盘中阶梯加仓（仅买入侧；卖出/止盈不受影响）
+    if sent_block:
+        return
+    # AUD1 修复(2026-10-03)：M3 台账落盘失败熔断联动——本函数每档成功后都会
+    # save_m3 落盘当日额度，台账丢失重启后额度重新放开可致超额度加仓，故落盘
+    # 失败即暂停 M3 阶梯加仓（恢复后自动解除；止盈/卖出不受限）。
+    if not _M3_PERSIST_OK:
+        if _diag_due("M3_PERSIST"):
+            log("M3台账持久化失败(_M3_PERSIST_OK=False)，盘中阶梯加仓暂停；"
+                "写入恢复成功自动解除（止盈/卖出不受限）")
+        return
+    # P3-14(2026-10-01)：涨停卖出当日该标的不再买入
+    if state.get("limit_sell_date", "") == datetime.now().strftime("%Y-%m-%d"):
+        return
+    cap = (cfg or {}).get("capital_cap", MAX_INVEST_PER_SYMBOL)
+    free = _account_free_cash(code, cash)   # 4.1 账户级资金闸门：本标的可动用(扣其他标的已部署)
+    can_buy = (up is not None and up > 0 and price < up)
+    drop = (open_px - price) / open_px
+    m3, today = get_daily_ledger(code)
+    for lvl_drop, lvl_amt in M3_LEVELS:
+        lvl_amt_use = lvl_amt * sent_scale   # AUD72：情绪缩放只减不加（默认中性/乐观=1.0）
+        lvl_name = "drop%.1f%%" % (lvl_drop * 100)
+        if drop >= lvl_drop and lvl_name not in m3["triggered"]:
+            # P1-4：软暂停在档位循环内复查（每尝试一档前重新判定，
+            # 单根 bar 最多触发 M3_SOFT_PAUSE_LEVELS 档）
+            if len(m3.get("triggered", [])) >= M3_SOFT_PAUSE_LEVELS:
+                if _diag_due("M3_SOFT"):
+                    log("[%s] M3盘中加仓软暂停：今日已触发%d档(>=%d档)，剩余档暂缓，等待企稳"
+                        % (code, len(m3["triggered"]), M3_SOFT_PAUSE_LEVELS))
+                break
+            # P0/O2：M2+M3 共享单日额度（先于 M3 自身日限检查）
+            if m3["used"] + m3.get("m2_used", 0.0) + lvl_amt_use > DAILY_ADD_CAP + 1e-6:
+                log("[%s] 当日加仓总额度(M2+M3, %.0f元)已用尽(已用%.0f)，M3盘中加仓停止"
+                    % (code, DAILY_ADD_CAP, m3["used"] + m3.get("m2_used", 0.0)))
+                break
+            if m3["used"] + lvl_amt_use > M3_DAILY_CAP + 1e-6:
+                log("[%s] M3盘中加仓额度已用尽(累计%.0f元)，请人工介入" % (code, m3["used"]))
+                break
+            if not can_buy:
+                # up 可为 None/0(涨跌停价未知)：不能直接 %.2f 格式化，否则 TypeError
+                log("[%s] 盘中阶梯加仓 %s 触发但处于涨停价%s，禁止买入，跳过"
+                    % (code, lvl_name, ("%.2f" % up) if up else str(up)))
+                break
+            vol = calc_shares(lvl_amt_use, price, params["lot_size"], free)
+            # P3-5：1 手兜底（与首仓/M2 同口径：兜底后金额不超本档预算）
+            _lot_px = price * params["lot_size"]
+            if vol == 0 and lvl_amt_use >= _lot_px and _lot_px <= lvl_amt_use + 1e-6:
+                vol = params["lot_size"]
+            if vol == 0:
+                if _diag_due(code):
+                    log("[%s] 盘中阶梯加仓 %s 拆不出1手(档位预算%.0f元 < 1手价%.0f元)，本档跳过"
+                        % (code, lvl_name, lvl_amt_use, _lot_px))
+                continue
+            if vol * price <= free:
+                # 单标的硬上限闸门（与首仓/M2 同口径，防多日累计突破 capital_cap）
+                ok_cap, cap_reason = can_invest(cap, state["deployed"], vol * price)
+                if not ok_cap:
+                    log("[%s] 持仓限额：%s" % (code, cap_reason))
+                    break
+                if buy_shares(C, code, acct, price, vol, "盘中阶梯加仓 " + lvl_name, state,
+                              cap=cap):
+                    m3["triggered"].append(lvl_name)
+                    m3["used"] += vol * price
+                    # AUD55(2026-10-13)：free 原在档位循环外只算一次、买入后不递减，极端暴跌单根bar
+                    # 连触发 2 档时第 2 档仍按最初现金额度定量，两笔合计可能超账户可用现金致券商废单。
+                    free = max(0.0, free - vol * price)   # 已花掉的钱从可用现金里扣掉，第2档按剩余现金定量
+                    state["total_cost"] += compute_buy_cost(vol, price)
+                    state["deployed"] += compute_buy_cost(vol, price)   # AUD33：deployed 统一为含费投入口径(与 total_cost/外部同步一致)
+                    state["position_shares"] += vol
+                    # 2026-09-28 修复（4.2 补丁，回灌自单股版 v3/v8）：M3 加仓须同步 expected_shares，
+                    # 否则「券商已追平在途买单」(actual == expected) 判定永不成立，pending 只能等超时清理。
+                    state["expected_shares"] += vol
+                    log("【买入】%s 盘中阶梯加仓 %s %d股 @%.2f" % (_cn(code), lvl_name, vol, price))
+                    # 2026-09-29 审计修复 M3（对齐母版）：每档成功后立即落盘——
+                    # 下单成功到循环结束之间的崩溃会丢失当日加仓额度台账（重启后额度重新放开）。
+                    save_state(code, state)
+                    save_m3(code, m3)
+
+
+# 模块级跨标的共享状态（4.1/4.3 用；1.3 首仓日期已改为随 state 落盘持久）
+_SUSP_VOL_BARS = {}      # code -> 连续零成交量 bar 计数（停牌启发）
+
+
+# 账户级资金闸门(4.1)：多标的共用一账户，返回未被其他标的已部署占用的可用现金
+def _account_free_cash(code, cash):
+    total_deployed = 0.0
+    _mt = manual_takeover_codes()
+    for _c, _s in STATES.items():
+        if _c == code:
+            continue
+        # AUD76(2026-10-19)：人工接管标的的已投入资金不再占用策略额度——
+        #   该标的持仓由人工管理，策略不自动买卖，其占用资金视为已释放。
+        if _c in _mt:
+            continue
+        total_deployed += float(_s.get("deployed", 0.0) or 0.0)
+    # AUD28(2026-10-07 铁律审计)：deployed 是历史总投入成本，多标的累计可能超过账户现金，
+    # 直接相减会得负数（负可用现金），导致加仓判断失真。钳制到 0：负值按“无可动用资金”处理。
+    return max(0.0, cash - total_deployed)
+
+
+# 9.5 入场优化辅助（2026-09-28 v9）—— 时间门 / 价格质量门 / 当日 VWAP / 首仓续批
+# ---------------------------------------------------------------------------
+def _now_hms():
+    """当前 HHMMSS 整数（与 handlebar 顶部时段门控同口径）。"""
+    return int(datetime.now().strftime("%H%M%S"))
+
+
+def _hm_reached(hms, hm):
+    """hms 是否已到达 (H, M) 时刻。"""
+    return hms >= hm[0] * 10000 + hm[1] * 100
+
+
+# ---- AUD41：首仓未买成因汇总（仅日志，不参与任何买卖判断）----
+_ENTRY_BLOCK = {"date": "", "reasons": {}, "opened": set(), "logged": ""}
+
+
+def _note_entry_block(code, reason):
+    """AUD41：记录当日首仓被哪道闸门挡住（每标的每日最多 12 条）。
+    reason="__OPENED__" 表示该标的当日已开出首仓，汇总时不再提示。"""
+    try:
+        _d = datetime.now().strftime("%Y-%m-%d")
+        if _ENTRY_BLOCK.get("date") != _d:
+            _ENTRY_BLOCK["date"] = _d
+            _ENTRY_BLOCK["reasons"] = {}
+            _ENTRY_BLOCK["opened"] = set()
+            _ENTRY_BLOCK["logged"] = ""
+        if reason == "__EVAL__":
+            return
+        if reason == "__OPENED__":
+            _ENTRY_BLOCK["opened"].add(code)
+            return
+        _lst = _ENTRY_BLOCK["reasons"].get(code)
+        if _lst is None:
+            _lst = _ENTRY_BLOCK["reasons"][code] = []
+        if reason not in _lst and len(_lst) < 12:
+            _lst.append(reason)
+    except Exception:
+        pass
+
+
+def _entry_block_summary(code):
+    """AUD41：每个交易日 14:55 后输出一行「今日为何未开首仓」汇总（仅日志，不参与买卖判断）。"""
+    try:
+        _d = datetime.now().strftime("%Y-%m-%d")
+        if _ENTRY_BLOCK.get("date") != _d or _ENTRY_BLOCK.get("logged") == _d:
+            return
+        if code in (_ENTRY_BLOCK.get("opened") or set()):
+            return
+        if not _hm_reached(_now_hms(), (14, 55)):
+            return
+        _ENTRY_BLOCK["logged"] = _d
+        _rs = (_ENTRY_BLOCK.get("reasons") or {}).get(code) or []
+        if _rs:
+            log("[%s] 【首仓未买成因汇总】今日未开首仓，被挡环节：%s（仅日志，供排查）"
+                % (code, " / ".join(_rs)))
+        else:
+            log("[%s] 【首仓未买成因汇总】今日未开首仓，无明确拦截记录"
+                "（可能未进入首仓评估窗口，或当日无行情/未到评估时段）" % code)
+    except Exception:
+        pass
+
+
+def _in_entry_window(hms=None):
+    """是否处于允许开首仓的时间窗内（ENTRY_WINDOWS + ENTRY_SKIP_MIN 护栏）。"""
+    if hms is None:
+        hms = _now_hms()
+    for (h1, m1, h2, m2) in ENTRY_WINDOWS:
+        lo = h1 * 10000 + m1 * 100
+        hi = h2 * 10000 + m2 * 100
+        if lo <= hms < hi:
+            # 独立护栏：距本场开盘（09:30 / 13:00）须已过 ENTRY_SKIP_MIN 分钟。
+            # 默认窗口起点(09:45/13:20)已满足该值，此处防止窗口参数被改小后失去静默保护。
+            _open_hms = 93000 if h1 < 12 else 130000
+            if hms < _open_hms + ENTRY_SKIP_MIN * 100:
+                continue
+            return True
+    return False
+
+
+def _day_vwap(t, price):
+    """当日 VWAP = 累计成交额 / 累计成交量；字段缺失或口径异常返回 None。
+
+    QMT get_full_tick 的 volume 单位在不同版本可能是「手」或「股」，此处用
+    「结果须落在现价 0.5~1.5 倍」做自适应判定，两种口径都不合理则放弃该条件。
+    """
+    try:
+        amt = float(t.get("amount", 0.0) or 0.0)
+        vol = float(t.get("volume", 0.0) or 0.0)
+    except Exception:
+        return None
+    if amt <= 0 or vol <= 0 or price <= 0:
+        return None
+    for mult in (1.0, 100.0):
+        v = amt / (vol * mult)
+        if 0.5 * price <= v <= 1.5 * price:
+            return v
+    return None
+
+
+def _price_quality(price, open_px, day_high, ma20, vwap, relaxed):
+    """价格质量门：满足 G1/G2/G3 任一即放行；relaxed 时额外放行 G4(<=VWAP)。
+
+    返回 (ok, detail)。缺数据的条件自动跳过——不因取不到数据而误判为不通过。
+    """
+    hits = []
+    if open_px > 0 and price <= open_px * (1 + PQ_OPEN_TOL):
+        hits.append("G1不高于开盘%.2f" % open_px)
+    if day_high > 0 and price <= day_high * (1 - PQ_PULLBACK):
+        hits.append("G2距高%.2f已回撤%.2f%%" % (day_high, (1 - price / day_high) * 100))
+    if ma20 > 0 and price <= ma20 * (1 + PQ_MA20_TOL):
+        hits.append("G3不高于MA20%.2f" % ma20)
+    if relaxed and PQ_FALLBACK_VWAP and vwap and price <= vwap:
+        hits.append("G4不高于VWAP%.2f" % vwap)
+    if hits:
+        return True, " / ".join(hits)
+    if vwap:
+        return False, ("未达价格门(现价%.2f 开盘%.2f 最高%.2f MA20%.2f VWAP%.2f)"
+                       % (price, open_px or 0.0, day_high or 0.0, ma20 or 0.0, vwap))
+    return False, ("未达价格门(现价%.2f 开盘%.2f 最高%.2f MA20%.2f VWAP不可得)"
+                   % (price, open_px or 0.0, day_high or 0.0, ma20 or 0.0))
+
+
+def split_followup(C, code, acct, state, price, cash, params, cfg, up, can_buy,
+                   closes, highs, lows, vols, day_drop=None, sent_scale=1.0, sent_block=False):
+    """首仓分批续批（v9）。返回 True 表示本根 bar 已下单（调用方须跳过 M2/M3）。
+
+    closes/highs/lows/vols 为已收盘 bar 序列（P2-1）；day_drop 为当日可复现日内跌幅。
+    常规续批需同时满足：窗口内 + 距首批>=SPLIT_GAP_MIN + 价格<=首批*(1+SPLIT_PRICE_TOL)
+    + 信号仍成立（比方案多一道加固：信号失效时不继续建仓，改由 M2 通道接管）。
+    兜底补齐在 SPLIT_GUARANTEE_HHM 之后跳过价格门与间隔，按剩余占比一次下完。
+    风控闸门一条不减：buy_shares 内部仍走 verify_position_before_order + 返回值检查。
+    """
+    # AUD72：情绪门拦截续批（仅买入侧；卖出/止盈不受影响）
+    if sent_block:
+        return False
+    n = int(state.get("first_batch_n", 0) or 0)
+    if n <= 0 or n >= SPLIT_MAX_BATCH:
+        return False
+    # AUD37(2026-10-08 第五轮零预设独立审计)：续批仅限「首仓第 1 批当日」——原实现只记批次数
+    # 不记批次日期，昨日首批成交后今日仍会续批（14:45 兜底补齐甚至无条件补买剩余批次），
+    # 把「当日分批建仓」变成「隔日追买」且绕过 DAILY_ADD_CAP 当日额度。跨日后剩余批次作废，
+    # 后续加仓由 M2 金字塔/M3 盘中阶梯接管。
+    _today_fb = datetime.now().strftime("%Y-%m-%d")
+    if state.get("first_batch_date", "") != _today_fb:
+        return False
+    hms = _now_hms()
+    if _hm_reached(hms, ENTRY_DEADLINE):
+        return False                       # 窗口已关闭，当日不再续批
+    plan = float(state.get("first_batch_amt", 0.0) or 0.0)
+    if plan <= 0:
+        plan = cfg["capital_cap"] * params["pyramid"][0] * sent_scale
+    b1px = float(state.get("first_batch_px", 0.0) or 0.0)
+    b1ts = float(state.get("first_batch_ts", 0.0) or 0.0)
+    guarantee = bool(SPLIT_GUARANTEE and _hm_reached(hms, SPLIT_GUARANTEE_HHM))
+    if not guarantee:
+        if not _in_entry_window(hms):
+            return False
+        if b1ts > 0 and (time.time() - b1ts) < SPLIT_GAP_MIN * 60:
+            return False
+        if b1px > 0 and price > b1px * (1 + SPLIT_PRICE_TOL):
+            return False
+        _sig, _sr = entry_signal_full(closes, highs, lows, vols, params, day_drop=day_drop)
+        if not _sig:
+            return False
+    ratio = sum(FIRST_SPLIT[n:]) if guarantee else FIRST_SPLIT[n]
+    if ratio <= 0:
+        return False
+    amount = plan * ratio
+    cash_use = min(cash, amount, _account_free_cash(code, cash))
+    vol = calc_shares(cash_use, price, params["lot_size"], cash)
+    if vol == 0:
+        if _diag_due(code):
+            log("[%s] 首仓第%d批预算不足1手(可动用%.0f元<1手%.0f元)，本批跳过"
+                % (code, n + 1, cash_use, price * params["lot_size"]))
+        return False
+    if not can_buy:
+        if _diag_due(code):
+            log("[%s] 首仓续批遇涨停价%s，禁止买入，跳过"
+                % (code, ("%.2f" % up) if up else str(up)))
+        return False
+    ok_cap, cap_reason = can_invest(cfg["capital_cap"], state["deployed"], vol * price)
+    if not ok_cap:
+        if _diag_due(code):
+            log("[%s] 持仓限额：%s" % (code, cap_reason))
+        return False
+    if buy_shares(C, code, acct, price, vol,
+                  "首仓第%d批" % (n + 1), state, cap=cfg["capital_cap"]):
+        state["position_shares"] += vol
+        state["expected_shares"] += vol
+        state["total_cost"] += compute_buy_cost(vol, price)
+        state["deployed"] += compute_buy_cost(vol, price)   # AUD33：deployed 统一为含费投入口径
+        state["tier"] = 0
+        # M2 基准统一为「首仓加权均价」——分批后不得随最后一批价格漂移（方案 §4.3）
+        if state["position_shares"] > 0:
+            state["last_add_price"] = state["total_cost"] / state["position_shares"]
+        state["first_batch_n"] = SPLIT_MAX_BATCH if guarantee else (n + 1)
+        log("[%s] 首仓第%d批成交(预期): %d股 @%.2f | 累计%d股 均价%.3f"
+            % (code, n + 1, vol, price, state["position_shares"], state["last_add_price"]))
+        return True
+    return False
+
+# ---------------------------------------------------------------------------
+# 10. 主逻辑（handlebar：遍历所有启用标的，每标的独立状态/台账/冷却）
+# ---------------------------------------------------------------------------
+"""
+AUD45(2026-10-12) 每30分钟诊断汇总日志 —— 定义块
+纯日志，不参与任何买卖判断；异常自捕获，绝不影响主流程。
+红线零触碰：止损仅告警不卖出；所有卖出按净到手口径复核。
+"""
+
+# ---- 每10分钟诊断汇总日志（AUD45，AUD49 缩短节流）----
+_HDIAG_TS = {}        # code -> 上次汇总输出时间戳
+_HDIAG_GAP = 600.0    # 每 10 分钟（600 秒）打一次（原 1800 秒/30 分钟，AUD49 改）
+_HDIAG_MARK = "AUD45"
+
+
+def _hdiag_due(code):
+    """每10分钟诊断汇总是否到期。返回 True 表示本次放行输出。"""
+    _now = time.time()
+    if _now - _HDIAG_TS.get(code, 0.0) >= _HDIAG_GAP:
+        _HDIAG_TS[code] = _now
+        return True
+    return False
+
+
+def _hdiag_profit_txt(state, price):
+    """持仓盈亏口径（净到手，扣印花0.05%+佣金万0.841最低5元+过户费0.001%）。"""
+    _pos = int(state.get("position_shares", 0) or 0)
+    _cost = float(state.get("total_cost", 0.0) or 0.0)
+    if _pos <= 0 or _cost <= 0:
+        return "无持仓"
+    _mv = _pos * price
+    _sell_comm = max(_mv * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN)
+    _sell_stamp = _mv * STOCK_STAMP_TAX_RATE
+    _sell_trf = _mv * STOCK_TRANSFER_FEE_RATE
+    _net = _mv - _sell_comm - _sell_stamp - _sell_trf
+    _pnl = _net - _cost
+    _pnl_pct = (_pnl / _cost * 100.0) if _cost > 0 else 0.0
+    _tp_pct = float(PARAMS.get("take_profit_pct", 0.04))
+    _ts_act = float(PARAMS.get("trailing_activate_pct", 0.03))
+    _ts_dd = float(PARAMS.get("trailing_dd_pct", 0.02))
+    if _pnl_pct >= _tp_pct * 100:
+        _tp_txt = "触发固定止盈(%.1f%%>=%.0f%%)" % (_pnl_pct, _tp_pct * 100)
+    elif _pnl_pct >= _ts_act * 100:
+        _peak = float(state.get("trailing_peak", 0.0) or 0.0)
+        if _peak > 0:
+            _dd_peak = (_peak - price) / _peak * 100.0
+            if _dd_peak >= _ts_dd * 100:
+                _tp_txt = "触发移动止盈(最高%.2f->现价%.2f回落%.1f%%>=%.0f%%)" % (
+                    _peak, price, _dd_peak, _ts_dd * 100)
+            else:
+                _tp_txt = "接近移动止盈(最高%.2f->现价%.2f回落%.1f%%<%.0f%%)" % (
+                    _peak, price, _dd_peak, _ts_dd * 100)
+        else:
+            _tp_txt = "浮盈未触发移动止盈(无峰值参考)"
+    else:
+        _tp_txt = "浮盈未达止盈线(%.1f%%<%.0f%%)" % (_pnl_pct, _tp_pct * 100)
+    return ("持仓%d股 成本%.2f 现价%.2f 净浮盈(现价卖出且已扣预估卖出费用)%.2f元(%.2f%%) | %s"
+            % (_pos, (_cost / _pos) if _pos else 0.0, price, _pnl, _pnl_pct, _tp_txt))
+
+
+def _hdiag_buy_txt(code, price, dd, k_k, w_r, sig, sig_reason,
+                   trend_ok, trend_reason, mkt_ok, mkt_detail, bull,
+                   state, up, in_win, indicator_src="已收盘日线", indicator_last="未知"):
+    """「为什么没买」逐条诊断摘要（所有判定值由调用方算好传入，本函数只做格式化）。"""
+    _seg = []
+    _pos = int(state.get("position_shares", 0) or 0)
+    _k_th = float(PARAMS.get("kdj_k_threshold", 25))
+    _w_th = float(PARAMS.get("wr_threshold", 85))
+    _dip = float(PARAMS.get("dip_trigger_pct", 0.02))
+
+    # 1) 持仓/空仓状态
+    if _pos > 0:
+        _seg.append("已持仓%d股(本bar仅评估加仓)" % _pos)
+    else:
+        _seg.append("空仓(本bar评估首仓)")
+
+    # 2) 个股多头 + 大盘过滤
+    _seg.append("个股多头=%s" % ("达标(MA20>=MA60)" if bull else "未达标(MA20<MA60)"))
+    # AUD52：达标时也带出原因——否则「AUD46豁免F2生效」这类信息看不到
+    if mkt_ok and "豁免" in (mkt_detail or ""):
+        _seg.append("大盘过滤=原条件未达标，AUD46豁免通过(%s)" % (mkt_detail or "无"))
+    else:
+        _seg.append("大盘过滤=%s" % (("原条件达标(%s)" % (mkt_detail or "无")) if mkt_ok
+                                     else "未达标(%s)" % (mkt_detail or "无")))
+
+    # 3) 首仓信号四路。KDJ/WR按策略设计使用已收盘日线，盘中不随实时价格变化。
+    _seg.append("KDJ_K=%s" % ("无数据" if k_k is None else
+               ("%.1f(需<%.0f，已达标)" % (k_k, _k_th) if k_k < _k_th else "%.1f(需<%.0f，未达标)" % (k_k, _k_th))))
+    _seg.append("WR=%s" % ("无数据" if w_r is None else
+               ("%.1f(需>%.0f，已达标)" % (w_r, _w_th) if w_r > _w_th else "%.1f(需>%.0f，未达标)" % (w_r, _w_th))))
+    _seg.append("指标源=%s(末根%s)" % (indicator_src, indicator_last))
+    _seg.append("日内涨跌(相对昨收)=%.2f%%(%s)" % (dd * 100.0, "触发跌幅信号" if dd < -_dip else "未触发跌幅信号"))
+    _seg.append("趋势跟随=%s" % ("达标(%s)" % (trend_reason or "无条件") if trend_ok else "未达标"))
+    _seg.append("组合信号=%s" % ("成立(%s)" % (sig_reason or "无") if sig else "未成立"))
+
+    # 4) 时间窗 + 冷却/暂停/在途
+    # AUD64：首仓时间窗只对空仓首仓路径有意义，持仓加仓由 M2/M3 独立管理，持仓时不再显示。
+    if _pos <= 0:
+        _seg.append("首仓时间窗=%s" % ("窗内" if in_win else "窗外"))
+    _seg.append("暂停=%s" % ("暂停(躺平/熔断)" if state.get("paused") else "否"))
+    _seg.append("卖出冷却=%s" % ("冷却中(%s)" % state.get("stop_cooldown_until", "") if in_cooldown(state) else "无"))
+    if float(state.get("sell_pending_until", 0.0) or 0.0) > time.time():
+        _seg.append("卖出在途(冻结加仓)")
+    if str(state.get("limit_sell_date", "") or "") == datetime.now().strftime("%Y-%m-%d"):
+        _seg.append("当日已涨停卖出过")
+
+    # 5) 卡点按真实执行路径区分：空仓评估首仓；持仓评估续批/M2/M3加仓。
+    _chain = []
+    if state.get("paused"):
+        _chain.append("处于暂停")
+    elif float(state.get("sell_pending_until", 0.0) or 0.0) > time.time():
+        _chain.append("卖出在途冻结加仓")
+    elif str(state.get("limit_sell_date", "") or "") == datetime.now().strftime("%Y-%m-%d"):
+        _chain.append("当日涨停卖出过")
+    elif _pos > 0:
+        _tier = int(state.get("tier", -1) or -1)
+        _last_add = float(state.get("last_add_price", 0.0) or 0.0)
+        _step = float(PARAMS.get("add_step_pct", 0.02))
+        if _tier >= len(PARAMS.get("pyramid", [])) - 1:
+            _chain.append("M2金字塔已到最高档")
+        elif _last_add <= 0:
+            _chain.append("M2缺少上次加仓基准价")
+        elif price > _last_add * (1.0 - _step):
+            _chain.append("M2下一档未到价(需<=%.2f，现价%.2f)" % (_last_add * (1.0 - _step), price))
+        else:
+            _chain.append("M2价格已到位；继续核对当日额度/M3软暂停/资金/在途/参与率")
+    elif not bull:
+        _chain.append("个股非多头")
+    elif not mkt_ok:
+        _chain.append("F2大盘过滤未过")
+    elif in_cooldown(state):
+        _chain.append("卖出冷却期内")
+    elif not in_win:
+        _chain.append("不在首仓时间窗")
+    elif not sig:
+        _chain.append("首仓信号未成立")
+    elif not up or up <= 0:
+        _chain.append("涨停价未知->禁买")
+    elif price >= up:
+        _chain.append("触及涨停%.2f->禁买" % up)
+    else:
+        _chain.append("首仓信号+门控已过；未成交再查价格质量/分批间隔/资金/在途")
+    _seg.append("卡点=%s" % " > ".join(_chain))
+
+    return " | ".join(_seg)
+
+
+def _hdiag_sell_txt(state, price, dn, tp_ok, tp_reason, sl_ok, sl_alert):
+    """「为什么没卖」逐条诊断摘要。铁律：止损仅告警不卖出；卖出按净到手口径。"""
+    _seg = []
+    _pos = int(state.get("position_shares", 0) or 0)
+    if _pos <= 0:
+        return "无持仓，无卖出动作"
+
+    # 1) 止盈状态
+    if tp_ok:
+        _seg.append("止盈信号成立(%s)" % (tp_reason or "无"))
+    else:
+        _seg.append("止盈信号未成立")
+
+    # 2) 止损告警（仅告警，红线不卖）
+    if sl_ok and sl_alert:
+        _seg.append("止损告警(净回撤%.2f%%/浮亏%.2f%%)→铁律仅告警不卖出" % (
+            sl_alert.get("drawdown_pct", 0.0) * 100.0, sl_alert.get("loss_pct", 0.0) * 100.0))
+    else:
+        _seg.append("止损告警未触发(仍不自动卖出)")
+
+    # 3) 跌停门控
+    if not dn or dn <= 0:
+        _seg.append("跌停价未知->禁卖")
+    elif price <= dn:
+        _seg.append("触及跌停%.2f->禁卖" % dn)
+    elif tp_ok:
+        _seg.append("跌停未触及->可卖(止盈已成立但未卖出，需人工核对成交/在途)")
+
+    return " | ".join(_seg)
+
+
+def _hdiag_log(C, code, params, state):
+    """AUD45 每30分钟汇总诊断：列明标的当时为什么没买/没卖。
+
+    纯日志，不参与任何买卖判断；任何异常静默忽略，绝不影响主流程。
+    红线零触碰：止损仅告警不自动卖出；卖出均按净到手口径复核。
+    """
+    try:
+        # 仅交易时段输出
+        _hms = int(datetime.now().strftime("%H%M%S"))
+        if not (93000 <= _hms <= 112959 or 130000 <= _hms <= 145959):
+            return
+        if _is_replay_bar(C, count=False):
+            return
+
+        # ---- 行情 ----
+        t = get_tick_safe(C, code)
+        if not t:
+            return
+        price = float(t.get("lastPrice") or t.get("last") or 0.0)
+        open_px = float(t.get("open", 0.0) or 0.0)
+        _lc = float(t.get("lastClose") or 0.0) if isinstance(t, dict) else 0.0
+        up, dn = get_limit_prices_safe(C, code, _lc)
+
+        # ---- 持仓（以券商为准）----
+        acct = resolve_account(C, code)
+        actual_vol = 0
+        if acct:
+            _ok_q, actual_vol, _ba, _cu = query_position_safe(C, acct, code)
+        st_pos = int(state.get("position_shares", 0) or 0)
+        hold = max(actual_vol, st_pos)
+
+        # ---- 历史 K 线 ----
+        hist4 = fetch_hist_fields(C, code, params)
+        if hist4 is None:
+            return
+        _h_closes, _h_highs, _h_lows, _h_vols, _ft = hist4
+        if not _h_closes:
+            return
+        # AUD52(2026-10-13 实盘暴露)：口径对齐——与首仓判定完全一致地剔除当日未完成 bar。
+        #   原实现直接使用 fetch_hist_fields 的原始序列（含当日进行中 bar），与引擎
+        #   _c_closes = _closed_slice(y_closes, _flag_today) 差一根 bar，导致 KDJ/MA/
+        #   趋势跟随判定翻面，出现「半时诊断显示信号成立、引擎却判首仓信号未成立」的
+        #   自相矛盾日志（10-13 实盘：诊断报趋势跟随达标(回踩MA20)，引擎判趋势未触发）。
+        #   此处按同一 _closed_slice 口径取数；纯日志，零行为变更。
+        c_closes = _closed_slice(_h_closes, _ft)
+        c_highs = _closed_slice(_h_highs, _ft)
+        c_lows = _closed_slice(_h_lows, _ft)
+        c_vols = _closed_slice(_h_vols, _ft)
+
+        # ---- 指标 ----
+        _kp = int(params.get("kdj_period", 9))
+        _wp = int(params.get("wr_period", 14))
+        k_arr, _d_arr, _j_arr = calc_kdj_arr(c_closes, c_highs, c_lows, _kp)
+        wr_arr = calc_wr_arr(c_closes, c_highs, c_lows, _wp)
+        k_k = k_arr[-1] if (k_arr and k_arr[-1] is not None) else None
+        w_r = wr_arr[-1] if (wr_arr and wr_arr[-1] is not None) else None
+        dd = 0.0
+        if _lc > 0:
+            dd = (price - _lc) / _lc
+        elif len(c_closes) >= 2 and c_closes[-2] > 0:
+            dd = (c_closes[-1] - c_closes[-2]) / c_closes[-2]
+        sig, sig_reason = entry_signal_full(c_closes, c_highs, c_lows, c_vols, params, day_drop=dd)
+        trend_ok, trend_reason = trend_follow_signal(c_closes, params)
+        mkt_ok, mkt_detail = market_filter_ok(C, params)
+        # AUD52：大盘门与引擎口径一致——含 AUD46 个股极强信号豁免。
+        #   原实现只取裸 market_filter_ok，豁免生效时会误报「卡点=F2大盘过滤未过」，
+        #   与实际买入路径（引擎用 _mkt_gate_ok）不一致。纯日志，零行为变更。
+        _h_gate_ok, _h_gate_note = market_filter_gate_ok(
+            C, code, params, c_closes, c_highs, c_lows, c_vols, dd, mkt_ok, mkt_detail)
+        if _h_gate_ok and not mkt_ok:
+            mkt_detail = "AUD46豁免F2生效(%s)" % _h_gate_note
+        mkt_ok = _h_gate_ok
+        bull = is_bull_market(c_closes)
+        # AUD55(2026-10-13)：诊断用 state 浅拷贝——should_take_profit 会写 state["trailing_peak"]
+        # （移动止盈最高价水位），而本函数承诺「纯日志、不参与任何买卖判断」，不应产生副作用。
+        tp_ok, tp_reason = should_take_profit(dict(state), price, params)
+        sl_ok, sl_alert = check_stop_loss_alert(state, 0.0, c_closes, price, params)
+        in_win = _in_entry_window(_hms)
+
+        # ---- 组装 ----
+        _day_txt = "平" if abs(dd) < 1e-9 else ("涨%.2f%%" % (dd * 100.0) if dd > 0 else "跌%.2f%%" % (dd * 100.0))
+        _open_gap = ((open_px - _lc) / _lc * 100.0) if (_lc > 0 and open_px > 0) else 0.0
+        _parts = ["现价%.2f 昨收%.2f 开%.2f(%s%.2f%%) 日内%s(相对昨收)" % (
+            price, _lc, open_px, ("高开" if _open_gap >= 0 else "低开"), abs(_open_gap), _day_txt)]
+        try:
+            _ind_last = previous_trading_day(datetime.now().strftime("%Y-%m-%d"))
+        except Exception:
+            _ind_last = "上一交易日"
+
+        _buy_txt = _hdiag_buy_txt(code, price, dd, k_k, w_r, sig, sig_reason,
+                                  trend_ok, trend_reason, mkt_ok, mkt_detail, bull,
+                                  state, up, in_win, "已收盘日线", _ind_last)
+        if hold <= 0:
+            _parts.append("【为何没买】" + _buy_txt)
+            _parts.append("【卖出】无持仓，无卖出动作")
+        else:
+            _parts.append("【持仓】" + _hdiag_profit_txt(state, price))
+            _parts.append("【为何没买】" + _buy_txt)
+            _parts.append("【为何没卖】" + _hdiag_sell_txt(state, price, dn, tp_ok, tp_reason, sl_ok, sl_alert))
+
+        log("[%s] 半时诊断(%s) %s" % (_cn(code), _HDIAG_MARK, " || ".join(_parts)))
+    except Exception as _e:
+        try:
+            log("[%s] 半时诊断异常(忽略，不影响交易): %s" % (code, _e))
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# AUD59(2026-10-14)：持仓盈亏 + 已清仓盈亏 汇总日志（每30分钟）
+# ---------------------------------------------------------------------------
+# 背景：用户要求「每半小时提示一次持仓盈亏和已清仓盈亏」。原半时诊断(AUD45)只显示
+# 当前持仓浮盈，不统计已清仓累计净到手。本块新增：
+#   ① _pnl_record_close：sell_all 卖出下单成功即记账（按保守成交价扣三费减持仓成本），
+#      累计到 _PNL_HISTORY 并落盘 gf_pnl_history.json；
+#   ② _pnl_load：init 启动时读回台账，重启不丢；
+#   ③ _pnl_display_due / _pnl_display_log：每 _PNL_GAP(1800s=30分钟) 在交易时段内
+#      输出一条汇总日志（持仓浮盈 + 已清仓净到手 + 累计盈亏）。
+# 铁律守卫：全部纯日志/记账，零交易行为变更；任何异常静默忽略，绝不影响主流程。
+_PNL_GAP = 1800.0                # 每 30 分钟输出一次盈亏汇总日志
+_PNL_TS = {}                     # code -> 上次盈亏汇总日志输出时间戳
+_PNL_HISTORY = {}                # code -> {"count": 已清仓次数, "pnl": 累计净到手盈亏}
+_PNL_HISTORY_LOCKED = False      # init 是否已完成台账加载
+
+
+def _pnl_record_close(code, vol, sell_price, state=None):
+    """记录一次卖出成交的净到手盈亏，累计到 _PNL_HISTORY 并落盘。
+
+    code        : 标的代码
+    vol         : 卖出股数
+    sell_price  : 卖出成交价（限价模式下为 order_price=现价×(1-卖出滑点0.003)）
+    state       : 卖出时持仓状态（含 total_cost 持仓总成本），用于按比例折算本次成本
+
+    口径：净到手 = sell_price×vol - 卖出费用(印花0.05%+佣金万0.841最低5元+过户费0.001%)
+          本次成本 = state["total_cost"] × (vol / state["position_shares"]) 按比例折算
+          本次净盈亏 = 净到手 - 本次成本
+    仅记账+日志，不修改 state、不参与任何买卖判断，铁律零触碰。
+    """
+    if vol <= 0:
+        return
+    _mv = sell_price * vol
+    _comm = max(_mv * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN)
+    _stamp = _mv * STOCK_STAMP_TAX_RATE
+    _trf = _mv * STOCK_TRANSFER_FEE_RATE
+    _net = _mv - _comm - _stamp - _trf
+    # 按比例折算本次卖出对应的持仓成本（total_cost 为全部持仓含费成本）
+    _cost_share = 0.0
+    _pos = int((state or {}).get("position_shares", 0) or 0)
+    _tc = float((state or {}).get("total_cost", 0.0) or 0.0)
+    if _pos > 0 and _tc > 0:
+        _cost_share = _tc * (float(vol) / float(_pos))
+    _pnl = _net - _cost_share
+    # AUD60(2026-10-14)：胜率统计——净盈亏>0 记一胜，<=0 记一负；win/count 即胜率。
+    # 铁律「不赚钱不卖」保证策略只卖盈利仓，但部分卖出/滑点临界仍可能出现负净到手，
+    # 如实记录不掩盖。
+    _h = _PNL_HISTORY.setdefault(code, {"count": 0, "pnl": 0.0, "win": 0, "loss": 0})
+    _h["count"] = int(_h.get("count", 0) or 0) + 1
+    _h["pnl"] = float(_h.get("pnl", 0.0) or 0.0) + _pnl
+    if _pnl > 0:
+        _h["win"] = int(_h.get("win", 0) or 0) + 1
+    else:
+        _h["loss"] = int(_h.get("loss", 0) or 0) + 1
+    _w = int(_h.get("win", 0) or 0)
+    _l = int(_h.get("loss", 0) or 0)
+    _wr = (_w / (_w + _l) * 100.0) if (_w + _l) > 0 else 0.0
+    # AUD61(2026-10-14)：每笔清仓明细额外显示「本次盈亏率%」——净盈亏/本次成本份额×100，
+    # 让「每次清仓的胜率」在记账当刻即可见（本笔盈亏率 + 累计胜率），无需等30分钟汇总。
+    _pnl_pct = (_pnl / _cost_share * 100.0) if _cost_share > 0 else 0.0
+    try:
+        log("[%s] 【已清仓记账】第%d次 卖出%d股@%.2f 净到手%.2f元 成本份额%.2f 净盈亏%.2f元(%.2f%%,%s) | 累计已清仓%d次 胜%d负%d 胜率%.1f%% 累计净到手%.2f元"
+            % (code, _h["count"], vol, sell_price, _net, _cost_share, _pnl,
+               _pnl_pct, ("胜" if _pnl > 0 else "负"), _h["count"], _w, _l, _wr, _h["pnl"]))
+    except Exception:
+        pass
+    _pnl_save()
+
+
+def _pnl_save():
+    """把 _PNL_HISTORY 落盘到 PNL_HISTORY_FILE（复用 _lock_and_write 原子写）。
+    任何失败静默忽略，绝不影响主流程；台账不落盘的最坏结果是重启后历史归零，
+    不影响资金安全。"""
+    try:
+        def _w(fp):
+            fp.write(json.dumps(_PNL_HISTORY, ensure_ascii=False).encode("utf-8"))
+        _lock_and_write(PNL_HISTORY_FILE, _w)
+        _mirror_copy("gf_pnl_history.json")
+    except Exception:
+        pass
+
+
+def _pnl_load():
+    """init 启动时读回已清仓盈亏台账。任何失败静默忽略，台账缺失则从空表开始。"""
+    global _PNL_HISTORY, _PNL_HISTORY_LOCKED
+    if _PNL_HISTORY_LOCKED:
+        return
+    _PNL_HISTORY_LOCKED = True
+    try:
+        _blob, _err = _read_file_bytes(PNL_HISTORY_FILE)
+        if _blob is None:
+            return
+        _data = json.loads(_blob.decode("utf-8"))
+        if isinstance(_data, dict):
+            for _k, _v in _data.items():
+                if isinstance(_v, dict):
+                    _PNL_HISTORY[_k] = {
+                        "count": int(_v.get("count", 0) or 0),
+                        "pnl": float(_v.get("pnl", 0.0) or 0.0),
+                        "win": int(_v.get("win", 0) or 0),
+                        "loss": int(_v.get("loss", 0) or 0),
+                    }
+    except Exception:
+        pass
+
+
+def _pnl_display_due(code):
+    """每30分钟盈亏汇总日志是否到期。返回 True 表示本次放行输出。"""
+    _now = time.time()
+    if _now - _PNL_TS.get(code, 0.0) >= _PNL_GAP:
+        _PNL_TS[code] = _now
+        return True
+    return False
+
+
+def _pnl_display_log(C, code, state):
+    """AUD59 每30分钟盈亏汇总日志：持仓浮盈 + 已清仓净到手 + 累计盈亏。
+
+    纯日志，不参与任何买卖判断；任何异常静默忽略，绝不影响主流程。
+    铁律零触碰：卖出均按保守成交价×净到手口径核算（与 sell_all R1 一致）。
+    """
+    # 仅交易时段输出
+    _hms = int(datetime.now().strftime("%H%M%S"))
+    if not (93000 <= _hms <= 112959 or 130000 <= _hms <= 145959):
+        return
+    if _is_replay_bar(C, count=False):
+        return
+    # 实时价
+    _t = get_tick_safe(C, code)
+    if not _t:
+        return
+    _price = float(_t.get("lastPrice") or _t.get("last") or 0.0)
+    if _price <= 0:
+        return
+    # 当前持仓（以券商为准，优先真实持仓）
+    _pos = int((state or {}).get("position_shares", 0) or 0)
+    _cost = float((state or {}).get("total_cost", 0.0) or 0.0)
+    # 持仓盈亏：按保守成交价（与 sell_all R1 同口径）
+    _hold_pnl_txt = "无持仓"
+    _hold_pnl = 0.0
+    if _pos > 0 and _cost > 0:
+        _ref = round(_price * (1 - LIMIT_SLIP_PCT_SELL), 2) if PRICE_TYPE == 11 else _price
+        if _ref <= 0:
+            _ref = _price
+        _mv = _pos * _ref
+        _comm = max(_mv * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN)
+        _stamp = _mv * STOCK_STAMP_TAX_RATE
+        _trf = _mv * STOCK_TRANSFER_FEE_RATE
+        _net = _mv - _comm - _stamp - _trf
+        _hold_pnl = _net - _cost
+        _hold_pct = (_hold_pnl / _cost * 100.0) if _cost > 0 else 0.0
+        _hold_pnl_txt = "持仓%d股 成本%.2f 现价%.2f 保守成交价%.2f 净浮盈(保守成交价且已扣预估卖出费用)%.2f元(%.2f%%)" % (
+            _pos, (_cost / _pos) if _pos else 0.0, _price, _ref, _hold_pnl, _hold_pct)
+    # 已清仓累计 + 胜率（AUD60）
+    _h = _PNL_HISTORY.get(code)
+    if _h:
+        _closed_cnt = int(_h.get("count", 0) or 0)
+        _closed_pnl = float(_h.get("pnl", 0.0) or 0.0)
+        _w = int(_h.get("win", 0) or 0)
+        _l = int(_h.get("loss", 0) or 0)
+    else:
+        _closed_cnt, _closed_pnl = 0, 0.0
+        _w, _l = 0, 0
+    _wr = (_w / (_w + _l) * 100.0) if (_w + _l) > 0 else 0.0
+    _total_pnl = _hold_pnl + _closed_pnl
+    log("[%s] 【盈亏汇总】(每30分钟) %s | 已清仓%d次(胜%d负%d 胜率%.1f%%) 累计净到手%.2f元 | 策略累计盈亏%.2f元"
+        % (code, _hold_pnl_txt, _closed_cnt, _w, _l, _wr, _closed_pnl, _total_pnl))
+
+
+def _handlebar_impl(C, code, cfg, params, state):
+    # 交易日门控（2026-09-25 新增）：非交易日直接跳过，防止节假日/周末误下单。
+    # 在时段门控之前执行——盘后重启时也不应该在非交易日跑任何逻辑。
+    _is_td, _td_src = is_trade_day()
+    if not _is_td:
+        return
+
+    # 交易时段门控：仅 A 股连续竞价时段处理交易逻辑（09:30~11:29:59 / 13:00~14:59:59）。
+    # AUD20 修复(2026-10-04)：右端 150000 -> 145959——15:00 那根 bar 的委托必然落在
+    # 收盘集合竞价结束后被柜台拒单，不再发出（14:57-14:59 照常进集合竞价）。
+    # AUD24 修复(2026-10-07)：上午右端 113000 -> 112959（用户拍板 1B）——11:30 那根
+    # bar 的委托落在午间休市开始之后（与 15:00 同构），不再发出；止盈/加仓信号
+    # 顺延 13:00 后重评（资金风险为零）；展示用 _session_now/心跳保持 11:30 口径。
+    _hms = int(datetime.now().strftime("%H%M%S"))
+    if not (93000 <= _hms <= 112959 or 130000 <= _hms <= 145959):
+        return
+
+    # AUD12 修复(2026-10-04)：回放闸——历史回放/warm-up bar 不执行任何交易逻辑。
+    # 本版已不依赖 is_last_bar()（防错过盘中信号），防回放下单由本闸显式承担：
+    # bar 时间戳落后真实时钟>120s 即判回放 bar 跳过（get_bar_timetag 不可用时
+    # 放行并告警，由 quickTrade=1 与状态幂等兜底；详见母版 _is_replay_bar 注释）。
+    if _is_replay_bar(C):
+        return
+
+    # 交易触发门控：仅依赖上方 A 股连续竞价时段门控（每根 bar 评估，与回测逐 bar 一致）。
+    # 不再依赖 is_last_bar()——其实盘语义因 QMT 版本/周期而异（1分钟可能仅收盘 bar 返回 True），
+    # 会导致加仓/止盈错过盘中信号、与回测脱节。持仓同步/冷却/台账已保证幂等，重复评估安全；
+    # 历史回放 bar 已由上方 AUD12 回放闸显式拦截。
+
+    acct = resolve_account(C, code)
+    if not acct:
+        log("[%s] 未能获取资金账号（请在模型交易界面选择账号后运行）" % code)
+        return
+
+    # P0-1 修复(2026-10-01)：以券商委托为准重建在途买单台账（每进程每标的一次）——
+    # 进程重启后内存台账归零、状态文件可能写入失败，券商委托是唯一可信的跨进程数据源
+    _rebuild_pending_from_broker(acct, code)
+
+    # ---- 行情（innerApi: C.get_full_tick；取不到/价格无效跳过本根bar，见 get_tick_safe）----
+    t = get_tick_safe(C, code)
+    if not t:
+        return
+    price = float(t.get("lastPrice") or t.get("last") or 0.0)
+    open_px = float(t.get("open", 0.0) or 0.0)
+    # 2026-09-22：涨跌停价改按 innerApi 用 C.get_instrument_detail 取
+    # UpStopPrice/DownStopPrice（C.get_full_tick 返回无 upLimit/downLimit 字段）
+    # B1 修复(2026-10-08)：传入 tick 昨收，供真实价缺失时按 昨收×(1±10%) 推算兜底放行
+    _lc_b1 = float(t.get("lastClose") or 0.0) if isinstance(t, dict) else 0.0
+    up, dn = get_limit_prices_safe(C, code, _lc_b1)
+
+    # ---- 停牌显式判定（4.3）：连续 N 根 bar 零成交量视为疑似停牌，跳过交易 ----
+    # 聚宽端用 sec_obj.paused 显式识别；QMT 的 get_full_tick 对停牌股可能返回残留
+    # lastPrice(非0)，仅隐式跳过会误下单。此处用连续零成交量启发式兜底。
+    _vol_raw = t.get("volume", None)
+    _vol = 0.0 if _vol_raw is None else _vol_raw
+    try:
+        _vol = float(_vol)
+    except (TypeError, ValueError):
+        _vol = 0.0
+    # 2026-10-01 P3-3（数据质量）：tick 成交量做脏数据防护——NaN/负值/非数值按
+    # 「数据异常」跳过本根bar（不计入停牌计数），仅真实零成交量才累计连续零量 bar；
+    # 避免行情数据瞬时损坏把正常交易误判为停牌而整日不交易。
+    if _vol != _vol or _vol < 0:
+        log("[%s] tick成交量字段异常(%r)，本根bar跳过交易" % (code, _vol_raw))
+        return
+    if _vol <= 0:
+        # P1-1 修复(2026-10-01)：`_sb` 此前从未初始化即 `+=`，零成交量/字段缺失时抛
+        # UnboundLocalError -> 本根 bar 全部逻辑（含止盈）被跳过、停牌计数永不累积。
+        # 根因：母版为模块级 global 计数，生成器改为分标的 dict 时漏了取初值。
+        _sb = _SUSP_VOL_BARS.get(code, 0)
+        _sb += 1
+        _SUSP_VOL_BARS[code] = _sb
+        if _sb >= 3:
+            log("[%s] 疑似停牌(连续%d根bar零成交量)，本根bar跳过交易" % (code, _sb))
+            return
+    else:
+        _SUSP_VOL_BARS[code] = 0
+
+    # ---- 历史 K 线（fetch_hist_fields：30s 结果缓存 + 缺失自动补下载重拉，
+    #      内含四字段长度一致性守卫；仍失败返回 None 跳过本根bar。
+    #      语义：含当日进行中一根，实盘取最新价，非前视）----
+    hist4 = fetch_hist_fields(C, code, params)
+    if hist4 is None:
+        return
+    # AUD17(2026-10-04)：fetch_hist_fields 返回五元组，末位为「末根是否当日bar」口径标志；
+    # 已收盘切片/健全性基准/均量一律经 _closed_* 助手消费，不得裸切 [:-1]
+    y_closes, y_highs, y_lows, y_vols, _flag_today = hist4
+
+    # P2-2 修复(2026-10-01)：价格健全性断言——最近已收盘 bar 收盘价与实时价偏差超阈值
+    # 判数据异常（捕获复权口径错配/停牌残留价/脏数据），本根 bar 跳过交易
+    # AUD17：基准经 _prev_closed_ref 取「最近已收盘bar」（无当日bar时取末根，不再取错位）
+    _sanity_ref = _prev_closed_ref(y_closes, _flag_today)
+    if _sanity_ref and price > 0 and abs(_sanity_ref - price) / price > params.get("hist_price_sanity_pct", 0.10):
+        _log_hist_issue(code, "价格健全性检查失败：最近收盘%.2f 与实时价%.2f 偏差>%.0f%%，"
+                        "疑似复权口径错配/脏数据，本根bar跳过交易"
+                        % (_sanity_ref, price, params.get("hist_price_sanity_pct", 0.10) * 100))
+        return
+
+    # P3-6 修复(2026-10-01)：近 20 根已收盘 bar 平均成交量缓存（参与率闸门数据源，单位：手；
+    # buy_shares 内统一先换算成股再执行 max_participation_pct 闸门，覆盖首仓/续批/M2/M3 全部买入路径）
+    # AUD17：均量窗口按「末根是否当日bar」口径自适应
+    # AUD35(2026-10-08 第三轮零预设审计)：均量剔除停牌零量日（见 _closed_avg_vol）
+    _AVG_VOL20[code] = _closed_avg_vol(y_vols, 20, _flag_today)
+    # AUD44(2026-10-04 零预设独立审计)：成交量单位自检——参与率闸门把日线均量当「手」再 ×100
+    # 换算成「股」。若某版本 get_market_data_ex 的日线 volume 实际已是「股」，则再 ×100 会把
+    # 参与率上限放大 100 倍、闸门形同虚设。此处按 _diag_due 节流打印「日均量(手)→换算上限(股)」，
+    # 便于人工一眼核对单位是否正确。仅日志，不参与任何买卖判断。
+    if _AVG_VOL20.get(code) and _AVG_VOL20[code] > 0:
+        _avg20 = _AVG_VOL20[code]
+        _maxpct = PARAMS.get("max_participation_pct", 0.01)
+        _maxv = int(_avg20 * 100.0 * _maxpct)
+        _pday = datetime.now().strftime("%Y-%m-%d")
+        _plast = _PARTICIP_LOG_STATE.get(code) or {}
+        _pchanged = (not _plast or _plast.get("date") != _pday or
+                     abs(float(_plast.get("avg20", 0.0) or 0.0) - _avg20) > max(1.0, _avg20 * 0.001) or
+                     int(_plast.get("maxv", -1)) != _maxv)
+        if _pchanged:
+            _PARTICIP_LOG_STATE[code] = {"date": _pday, "avg20": _avg20, "maxv": _maxv}
+            log("[%s] 参与率自检(每日首次/数值变化) | 近20日均量 %.0f 手 (≈%.0f 股) × 参与率%.0f%% → 单笔上限 %d 股；"
+                "成交量单位已按已确认口径=手处理"
+                % (code, _avg20, _avg20 * 100.0, _maxpct * 100.0, _maxv))
+        # AUD55(2026-10-13)：单位自检由「打一行日志」升级为醒目告警——每日每标的只推一次风险事件，
+        # 便于第一时间发现「QMT 日线 volume 单位若为股而非手，_avg_v×100 会把参与率上限放大 100 倍、
+        # 闸门形同虚设」。仅告警，不改变任何买卖判断；真正的资金硬闸门
+        # （capital_cap×max_position_pct）与 buy_shares 内资金口径闸门均不受影响。
+        _puk = datetime.now().strftime("%Y-%m-%d")
+        # F-4(2026-10-17) 第十三轮独立审计·用户拍板落地：参与率告警时序澄清（AUD71 缩进归位）。
+        if _PARTICIP_UNIT_ALERT.get(code) != _puk:
+            _PARTICIP_UNIT_ALERT[code] = _puk
+            _notify_risk("particip_unit_check",
+                         "%s 参与率单位自检：近20日均量%.0f手 → 单笔上限%d股；"
+                         "若QMT日线volume单位非「手」请立即核对（否则参与率闸门被放大100倍）"
+                         % (code, _avg20, _maxv))
+    # ---- 真实持仓（以券商账户为准；查询失败则整根 bar 跳过，绝不下单）----
+    ok_q, actual_vol, broker_avg, _can_use = query_position_safe(C, acct, code)
+    if not ok_q:
+        log("[%s] 持仓查询失败，本根bar不交易（避免把查询失败误判为清仓/基于过期数据下单）" % code)
+        return
+    cash = get_cash_safe(C, acct)   # 5s缓存版(innerApi get_trade_detail_data)；失败按0（本根bar不买入）
+
+    # 在途买单超时结算（委托被拒/废单时清理记录，避免该标的永久无法买入）
+    settle_pending_timeout(C, acct, code)
+    # 2026-09-24 13:03 二次事故：连续超时结算熔断 → 暂停买入（止盈仍放行）
+    # AUD33(2026-10-08 零预设独立审计)：熔断/暂停原需人工删状态文件重启才解除；现跨日自动解除——
+    # 结算熔断与随之置位的 paused 只冻结当日，次日开盘自动恢复买入，避免错过新交易日行情。
+    _sb_date = _SETTLE_BREAKER_DATE.get(code)
+    if code in _SETTLE_BREAKER and _sb_date != datetime.now().strftime("%Y-%m-%d"):
+        _SETTLE_BREAKER.discard(code)
+        _SETTLE_FAILS.pop(code, None)
+        _SETTLE_BREAKER_DATE.pop(code, None)
+        log("【结算熔断跨日解除】%s 上一交易日熔断(%s)，今日自动解除，恢复买入" % (code, _sb_date or "?"))
+    if state.get("paused") and state.get("paused_date") and state["paused_date"] != datetime.now().strftime("%Y-%m-%d"):
+        log("【暂停跨日解除】%s 上一交易日暂停(%s)，今日自动解除，恢复操作" % (code, state["paused_date"]))
+        state["paused"] = False
+        state["paused_date"] = ""
+        save_state(code, state)
+    if code in _SETTLE_BREAKER and not state["paused"]:
+        state["paused"] = True
+        state["paused_date"] = datetime.now().strftime("%Y-%m-%d")
+        save_state(code, state)
+
+    # 外部交易检测：账户持仓与我们记录不一致 -> 以实际为准同步（差异详情写日志）
+    # 2026-09-24 P0 修复：必须区分「外部交易」与「我们自己的在途买单」。
+    # passorder 提交后券商持仓不会即时更新（异步落账），原实现直接裸比较
+    # `actual != position_shares` 就判为外部清仓 → 重置状态 → 下一根 bar 因内部
+    # 已空仓而重新触发首仓 → 每 3 秒重复买入 4700 股（当日 09:31 实盘事故）。
+    # 现在：差额落在 [内部记录-在途, 内部记录) 内即视为在途过渡态，保持状态不动。
+    # 仅当「券商可见股数 == 内部记录 - 全部在途买单」时，才判定在途单完全未落账
+    # （最典型的异步延迟态，也是重复下单事故的现场：内部 4700 / 在途 4700 / 券商 0）。
+    # 若券商股数高于该下界，说明已有部分成交或存在外部持仓，一律以券商为准同步，
+    # 避免内部状态长期偏离真实持仓（过宽会把「部分成交」也当成未落账而迟迟不收敛）。
+    _pend = _PENDING_BUYS.get(code, 0)
+    _in_flight = (_pend > 0 and actual_vol != state["position_shares"]
+                  and actual_vol == state["position_shares"] - _pend)
+    if _in_flight:
+        _log_dup_guard(code, "在途买单%d股尚未落账(内部记录%d股/券商%d股)，保持状态等待成交回报"
+                       % (_pend, state["position_shares"], actual_vol))
+    elif actual_vol != state["position_shares"]:
+        _sell_pending_handled = _sync_state_to_actual(C, acct, code, state, actual_vol, broker_avg, price)
+    else:
+        _sell_pending_handled = False
+    if not _in_flight:
+        # 「内部空仓 + 有在途买单」是矛盾态：不得清零 pending（清零即拆除防重复下单闸门），
+        # 交由 buy_shares 的在校闸门拦截并由 settle_pending_timeout 超时结算。
+        if (actual_vol == state.get("expected_shares", actual_vol)
+                and (actual_vol > 0 or _PENDING_BUYS.get(code, 0) == 0)):
+            _pending_clear(code, "券商已追平在途买单")
+            # 持仓追平=委托实际成交 → 此前"超时未成交"判定是误判，清零失败计数/熔断
+            if actual_vol > 0:
+                _SETTLE_FAILS.pop(code, None)
+                _SETTLE_BREAKER.discard(code)
+                _SETTLE_BREAKER_DATE.pop(code, None)
+        # 卖出在途期间不覆盖 position_shares（保持空仓等待成交，避免被券商未消化持仓复活）
+        if not _sell_pending_handled:
+            state["position_shares"] = actual_vol
+            state["expected_shares"] = actual_vol
+    state["cash"] = cash   # 注：多标的共用账户，此值为全账户现金，仅作参考，不参与风控计算
+
+    # ---- 指标（P2-1 修复，2026-10-01：只使用已收盘 bar，口径与母版/聚宽版一致）----
+    # AUD17 修复(2026-10-04)：切片按「末根是否当日bar」口径自适应——确认无当日 bar
+    # 时（盘前/部分数据源形态）原样使用全序列，不再误剔最近一根已收盘 bar。
+    _c_closes = _closed_slice(y_closes, _flag_today)
+    _c_highs = _closed_slice(y_highs, _flag_today)
+    _c_lows = _closed_slice(y_lows, _flag_today)
+    _c_vols = _closed_slice(y_vols, _flag_today)
+    YK, YD, _ = calc_kdj_arr(_c_closes, _c_highs, _c_lows, params["kdj_period"])
+    YWR = calc_wr_arr(_c_closes, _c_highs, _c_lows, params["wr_period"])
+    kdj_k = YK[-1] if (YK and YK[-1] is not None) else None
+    wr = YWR[-1] if (YWR and YWR[-1] is not None) else 0.0
+    # 日内跌幅（当日可复现量）：优先 tick 昨收口径，回退最近两根已收盘 bar 的日度变化
+    # AUD34(2026-10-08 第二轮零预设审计)记录项：tick 昨收缺失时回退语义=昨日跌幅（有意降级——
+    # 已收盘序列剔当日bar后 [-1]/[-2] 即昨/前日），仅影响首仓信号当日跌幅维度，保持现状。
+    _last_close = float(t.get("lastClose") or 0.0) if isinstance(t, dict) else 0.0
+    if _last_close > 0:
+        _day_drop_now = (price - _last_close) / _last_close
+    elif len(_c_closes) >= 2 and _c_closes[-2] > 0:
+        _day_drop_now = (_c_closes[-1] - _c_closes[-2]) / _c_closes[-2]
+    else:
+        _day_drop_now = 0.0
+
+    # ---- 情绪模块（AUD72 2026-10-17）：7 硬指标 -> 复合情绪分 -> 门控/缩放，仅影响买入侧 ----
+    # 情绪评估失败/数据不足时 _sent 为放行基值（fail-open），不阻塞任何交易。
+    _sent = _sentiment_eval(C, code, _c_closes, _c_vols, params)
+    _sent_block = bool(_sent.get("block"))
+    _sent_scale_entry = float(_sent.get("scale_entry", 1.0))
+    _sent_scale_add = float(_sent.get("scale_add", 1.0))
+
+    # M1 修复：涨跌停价未知(<=0)时保守拒绝；已知时按涨停不买/跌停不卖判断
+    can_buy = (up is not None and up > 0 and price < up)
+    can_sell = (dn is not None and dn > 0 and price > dn)
+
+    # ---- 组合权益 & 风控 ----
+    # 多标的共用一个资金账户，get_cash 返回全账户现金；若直接「全账户现金+本标的市值」，
+    # 会把其他标的占用的资金计入本标的净值，导致回撤/躺平线/止损告警全部失真。
+    # 故按标的独立口径计算权益：独立额度 - 已投入 + 本标的持仓市值（与单标的版
+    # 「专用账户现金+市值」语义等价，deployed 在买入/外部同步时已维护）。
+    # 2026-09-24 P0-2：持仓市值必须按「含在途买单」计价。买单提交后 deployed 即时增加，
+    # 但券商可见持仓要等成交回报才更新——若只按 actual_vol 估值，自有委托在途期间权益
+    # 被整笔少算，回撤瞬间虚高触发 8% 躺平并永久锁死。expected_shares 与 deployed 在
+    # 委托成功时同步写入，取 max 可精确抵消这段空窗。
+    mv = max(actual_vol, state.get("expected_shares", 0)) * price
+    equity = cfg["capital_cap"] - state["deployed"] + mv
+    ctrl = update_peak_and_check_circuit(state, equity, params)
+    if ctrl == "CIRCUIT":
+        if _log_circuit_throttled():
+            log("[%s] 躺平：净值自高点回撤>=%.0f%%，暂停操作(不买不卖)，持有等待回弹"
+                % (code, params["max_drawdown_pct"] * 100))
+    else:
+        _CIRCUIT_LOG_TS["ts"] = 0.0      # 退出躺平：清零节流，下次进入立即打印
+
+    # 硬止损（当前 hard_stop_dd_pct=None，不触发；保留结构）
+    if check_hard_stop(state, equity, params):
+        if _log_circuit_throttled():
+            log("[%s] 触发硬止损：总回撤超阈值，已暂停全部操作并保留持仓，等待人工干预" % code)
+        save_state(code, state)
+        return
+
+    # 止损告警（熊市回撤达阈值 -> 告警，不自动卖出）
+    sl_ok, sl_alert = check_stop_loss_alert(state, equity, _c_closes, price, params)
+    if sl_ok:
+        # AUD36(2026-10-08 第四轮零预设独立审计)：仅当本次尚未告警时才输出并置位——
+        # 回撤持续期间保持「已告警」状态，不再每根 bar 重复告警/重复发通知。
+        if not state.get("stop_loss_pending"):
+            state["stop_loss_pending"] = True
+            log("【止损告警-待处理】%s 净回撤%.2f%%/持仓浮亏%.2f%%(阈值%.0f%%) 持仓%d股@%.2f 估亏%.2f | 未执行卖出，请人工确认"
+                % (code, sl_alert["drawdown_pct"] * 100, sl_alert.get("loss_pct", 0.0) * 100,
+                   sl_alert["threshold_pct"] * 100,
+                   state["position_shares"], price, sl_alert["loss_amount"]))
+            # AUD19 修复(2026-10-04)：接入外部通知链（本地风险事件文件 + 可选 webhook）——
+            # 此前止损告警只写策略日志，日志轮转/写失败时无人知晓；红线不变（仍不自动卖出）
+            _notify_risk("stop_loss_alert",
+                         "%s 净回撤%.2f%%>=%.0f%% 持仓%d股 估亏%.0f元，请人工确认是否止损"
+                         % (code, sl_alert["drawdown_pct"] * 100,
+                            sl_alert["threshold_pct"] * 100,
+                            sl_alert["position_shares"], sl_alert["loss_amount"]))
+            # P2 修复(2026-08-28)：不再提前 return——告警当根 bar 仍允许止盈卖出。
+            # 「不自动卖出」红线只针对亏损止损；浮盈达止盈线的卖出不受告警影响。
+            save_state(code, state)
+    else:
+        # AUD30(2026-10-07 铁律审计)：止损告警标记在价格回升后从未复位，导致后续
+        # 再遇更深的回撤也不再告警（阈值被一次性跳过）。这里在告警未触发（回撤已
+        # 回升到阈值之下）时复位该标记。注意：仅复位状态标记，不执行任何卖出——
+        # 「坚决不止损、不赚钱不卖」的铁律不受影响。
+        # AUD36(2026-10-08 第四轮零预设独立审计)：配合 check_stop_loss_alert 去掉短路后，
+        # 仅当价格真正回升到阈值之下(sl_ok=False)才复位，回撤期间不再每根 bar 复位刷屏。
+        if state.get("stop_loss_pending"):
+            state["stop_loss_pending"] = False
+            save_state(code, state)
+
+    # ---- P3-14 移植(2026-10-01)：涨停自动卖出（对齐母版；规则移植自 limit_trade.py）----
+    # 持仓盘中触及涨停价 且 浮盈>0 -> 立即全部卖出；卖出后当日该标的不再买入。
+    # 红线保障：sell_all 内「绝不亏损卖出」盈亏复核闸门仍然生效。
+    _today_str = datetime.now().strftime("%Y-%m-%d")
+    if (actual_vol > 0 and up and up > 0 and price >= up
+            and state.get("limit_sell_date", "") != _today_str):
+        _avg_cost = (state["total_cost"] / state["position_shares"])             if state.get("position_shares") else 0.0
+        # AUD33(2026-10-08 零预设独立审计)：涨停卖出与 R1 同口径统一为净到手——市值扣除
+        # 卖出费用(印花税0.05%+佣金万0.841最低5元)后再判盈利，杜绝临界场景净亏手续费。
+        # AUD34(2026-10-08 第二轮零预设审计)：补扣过户费(mv×0.00001)，与止盈/R1 同费率口径。
+        # AUD36(2026-10-08 第四轮零预设独立审计)：与 R1 同口径收紧——涨停卖出判盈亏同样按
+        # 最保守成交价(现价下浮卖出滑点)计算净到手，杜绝临界区「按现价算赚、实际成交倒亏」。
+        _mv_up = round(price * (1 - LIMIT_SLIP_PCT_SELL), 2) * state.get("position_shares", 0)
+        _net_up = _mv_up - max(_mv_up * STOCK_COMMISSION_RATE, STOCK_COMMISSION_MIN) - _mv_up * STOCK_STAMP_TAX_RATE - _mv_up * STOCK_TRANSFER_FEE_RATE
+        if _avg_cost > 0 and _net_up > state["total_cost"]:
+            if can_sell and sell_all(C, code, acct, price, "涨停卖出", state):
+                _cd = cooldown_deadline()
+                state.clear()
+                state.update(new_state())
+                state["stop_cooldown_until"] = _cd
+                state["sell_pending_until"] = time.time() + _SELL_PENDING_TTL
+                state["limit_sell_date"] = _today_str
+                log("【涨停卖出】%s 触及涨停价%.2f 且浮盈>0，已全部卖出；"
+                    "卖出冷却至 %s，当日该标的不再买入" % (_cn(code), price, _cd))
+                save_state(code, state)
+                return
+        else:
+            if _diag_due(code):
+                log("[%s] 触及涨停但按净到手口径不盈利(成本%.2f>净到手%.2f)，按「绝不亏损卖出」红线不卖"
+                    % (code, _avg_cost, _net_up))
+
+    # S1 修复：止盈置于熔断暂停检查之前（熔断暂停期间仍放行止盈；止盈全平是唯一合法自动解除熔断路径）
+    # ---- 止盈：固定+移动止盈 ----
+    tp_ok, tp_reason = should_take_profit(state, price, params)
+    if tp_ok:
+        if not can_sell:
+            log("[%s] 触发止盈但处于跌停价%.2f 或跌停价未知，禁止卖出，等待打开" % (code, (dn or 0.0)))
+        else:
+            if sell_all(C, code, acct, price, tp_reason, state):
+                # P0/O1：全平后进入卖出冷却（冷却期内禁止开首仓，加仓不受限）
+                # P1 修复(2026-08-28)：原地重置（不可重绑定，理由同外部清仓分支），
+                # 冷却才能在后续 bar 真正生效——重绑定会让下一根 bar 误判外部清仓
+                # 而丢弃冷却字段，导致冷却期内立即重新买入（2026-08-28 审计实证）。
+                _cd = cooldown_deadline()
+                state.clear()
+                state.update(new_state())
+                state["stop_cooldown_until"] = _cd
+                # AUD70(2026-10-17 第十四轮零预设独立审计·用户确认修复)：与外部清仓分支同口径保留
+                # firstpos_date=当日 —— 杜绝「当日止盈平仓 → 当日重新开首仓」路径（防御纵深 + 行为一致）。
+                state["firstpos_date"] = _today_str
+                # R-C 修复(2026-09-28)：卖出已提交、券商持仓尚未落账，冻结 M2/M3 加仓窗口
+                state["sell_pending_until"] = time.time() + _SELL_PENDING_TTL
+                log("【止盈平仓】%s %s | 卖出冷却至 %s，期间禁止重开首仓" % (_cn(code), tp_reason, _cd))
+        save_state(code, state)
+        return
+
+    # ---- 数据就绪拦截闸门（2026-09-28 对齐母版）：所需数据未就绪 -> 拦截后续操作（止盈已在上方放行）----
+    # 未就绪时写节流日志并按节流弹窗列出缺失数据项（名称+用途），用户确认且复查通过后自动恢复。
+    # AUD56(2026-10-13，P2 方案A)：逐标的判定——只查指数 + 当前标的，别的标的缺数据不连累本标的
+    if not data_gate_ready_for(C, code):
+        save_state(code, state)
+        return
+
+    # 躺平模式：暂停一切操作（仅阻断买入；止盈/人工介入已在上方放行）
+    if state["paused"]:
+        save_state(code, state)
+        return
+
+    # ---- 空仓：首仓信号（限开盘窗口评估，1.3 与聚宽回测一致）----
+    # 2026-09-24：必须同时满足「内部记录为空仓」与「无在途买单」才可开首仓。
+    # 仅凭 actual_vol==0 会在委托尚未落账时重复触发首仓（实盘事故的直接触发点）。
+    # P0-1 修复(2026-10-01)：追加 _STATE_PERSIST_OK——落盘失败（持久化降级）期间不开新首仓。
+    # P3-14(2026-10-01)：涨停卖出当日（limit_sell_date）不再买入。
+    bull = is_bull_market(_c_closes)
+    # F2 大盘过滤（2026-09-28 回测锁定，对齐母版）：首仓额外要求沪深300 MA20>=MA60（只挡首仓）
+    mkt_ok, mkt_detail = market_filter_ok(C, params)
+    # AUD46(2026-10-12)：F2 大盘过滤首仓门，含个股极强信号豁免评估（开关已开启）
+    _mkt_gate_ok, _mkt_gate_note = market_filter_gate_ok(
+        C, code, params, _c_closes, _c_highs, _c_lows, _c_vols,
+        _day_drop_now, mkt_ok, mkt_detail)
+    if (actual_vol == 0 and not _mkt_gate_ok and bull
+            and not state["paused"] and not in_cooldown(state) and _f2_diag_due(code, mkt_detail)):
+        log("[%s] F2大盘过滤拦截首仓：%s" % (code, mkt_detail))
+    elif (actual_vol == 0 and mkt_ok is False and _mkt_gate_ok and bull
+            and not state["paused"] and not in_cooldown(state) and _f2_diag_due(code, mkt_detail)):
+        # 豁免命中：记录豁免原因（仅日志，不改变任何其他判断）
+        log("[%s] F2大盘过滤拦截，但个股极强信号豁免：%s | 原始:%s"
+            % (code, _mkt_gate_note, mkt_detail))
+    # 2026-09-24 13:03 二次事故：超时结算后必须冷却，禁止立刻重开首仓
+    _reopen_block = time.time() < _SETTLE_COOLDOWN.get(code, 0.0)
+    if _reopen_block and not state["paused"]:
+        _log_dup_guard(code, "在途单超时结算后冷却中(剩余%.0fs)，期间不重开首仓，请人工核对委托/成交"
+                       % (_SETTLE_COOLDOWN[code] - time.time()))
+    # AUD41：首仓未买成因留痕（仅写日志，不参与任何买卖判断）
+    if actual_vol == 0 and state.get("position_shares", 0) == 0:
+        _note_entry_block(code, "__EVAL__")
+        if state.get("paused"):
+            _note_entry_block(code, "被暂停(躺平/熔断)")
+        if _reopen_block:
+            _note_entry_block(code, "在途单超时结算后冷却中")
+        if _PENDING_BUYS.get(code, 0) > 0:
+            _note_entry_block(code, "有在途买单尚未落账")
+        if not _STATE_PERSIST_OK:
+            _note_entry_block(code, "状态落盘失败(持久化降级)")
+        if state.get("limit_sell_date", "") == datetime.now().strftime("%Y-%m-%d"):
+            _note_entry_block(code, "当日涨停卖出过")
+        if not bull:
+            _note_entry_block(code, "个股非多头(MA20<MA60)")
+        if not _mkt_gate_ok:
+            _note_entry_block(code, "沪深300大盘过滤未通过" + ("(" + _mkt_gate_note + ")" if _mkt_gate_note else ""))
+        if _sent_block:
+            _note_entry_block(code, "情绪门拦截(" + str(_sent.get("regime", "?")) + ")")
+        if in_cooldown(state):
+            _note_entry_block(code, "卖出冷却期内")
+        if not _in_entry_window(_hms) and not _hm_reached(_hms, ENTRY_DEADLINE):
+            _note_entry_block(code, "当前不在首仓时间窗(09:45-11:20/13:20-14:50)")
+
+    if (actual_vol == 0 and state["position_shares"] == 0
+            and _PENDING_BUYS.get(code, 0) == 0
+            and not state["paused"] and not _reopen_block
+            and state.get("limit_sell_date", "") != _today_str
+            and _STATE_PERSIST_OK
+            and bull and _mkt_gate_ok and not _sent_block and not in_cooldown(state)):
+        _today = datetime.now().strftime("%Y-%m-%d")
+        if ENTRY_OPT_ENABLED:
+            # ================= v9 入场优化路径：时间门 + 价格质量门 + 首仓分批 =================
+            # 语义变更（方案 §4.4）：firstpos_date 由「当日已评估」改为「当日首批已下单」。
+            # 窗内每根 bar 均可重评信号（方法1，信号是区间型、等待成本低）；首批下单成功才落标记；
+            # 窗口关闭仍未成交则当日收口放弃。无论走哪条路径，当日开新首仓的次数上限恒为 1。
+            if state.get("firstpos_date", "") != _today:
+                if _hm_reached(_hms, ENTRY_DEADLINE):
+                    _note_entry_block(code, "首仓窗口已关闭(14:50 后，当日不再开首仓)")
+                    # 窗口关闭仍未开出首仓 -> 当日放弃，次日重评（避免尾盘乱开仓）
+                    state["firstpos_date"] = _today
+                    log("[%s] 首仓窗口已于%02d:%02d关闭，当日不再开首仓（信号未成立或价格门未过）"
+                        % (code, ENTRY_DEADLINE[0], ENTRY_DEADLINE[1]))
+                elif _in_entry_window(_hms):
+                    # P2-1：信号指标用已收盘 bar；日内跌幅用当日可复现量（tick 昨收口径）
+                    first_sig, first_reason = entry_signal_full(_c_closes, _c_highs, _c_lows, _c_vols,
+                                                                params, day_drop=_day_drop_now)
+                    if not first_sig:
+                        # AUD42-3(2026-10-09)：区分「真没信号」与「有信号但被量能门否掉」——
+                        #   原实现两者都只记「首仓信号未成立」，导致「量能门是否为瓶颈」无法从
+                        #   日志判断。仅日志/留痕，不参与任何买卖判断。
+                        if first_reason == "缩量过滤":
+                            _note_entry_block(code, "信号成立但量能门未过")
+                            if _vol_diag_due(code):
+                                log("[%s] 首仓信号成立但量能未确认：%s → 本根bar不买（窗内每根bar重评）"
+                                    % (code, _vol_ratio_txt(_c_vols, params)))
+                        else:
+                            _note_entry_block(code, "首仓信号未成立")
+                            if _entry_diag_due(code):
+                                _entry_diag_log(code, _c_closes, _c_highs, _c_lows, _c_vols,
+                                                params, _day_drop_now, price,
+                                                _mkt_gate_ok,
+                                                (_mkt_gate_note if (_mkt_gate_ok and not mkt_ok) else mkt_detail),
+                                                bull)
+                    if first_sig:
+                        # AUD42-3：量能门诊断——通过 / 未参与（趋势路径免检或数据不足）各记一行
+                        #   （60s 节流，仅日志，不参与任何买卖判断）
+                        if _vol_diag_due(code):
+                            if "放量确认" in first_reason:
+                                log("[%s] 量能确认通过：%s | 信号:%s"
+                                    % (code, _vol_ratio_txt(_c_vols, params), first_reason))
+                            else:
+                                log("[%s] 量能门未参与(趋势路径免检或数据不足)：%s | 信号:%s"
+                                    % (code, _vol_ratio_txt(_c_vols, params), first_reason))
+                        # 当日基准价：字段缺失的条件自动跳过，不因取不到数据而误判为不通过
+                        _day_high = float(t.get("high", 0.0) or 0.0)
+                        _ma20 = (sum(_c_closes[-20:]) / 20.0) if len(_c_closes) >= 20 else 0.0
+                        _vwap = _day_vwap(t, price) if PQ_FALLBACK_VWAP else None
+                        _relaxed = _hm_reached(_hms, PQ_FALLBACK_HHM)
+                        pq_ok, pq_detail = _price_quality(price, open_px, _day_high, _ma20, _vwap, _relaxed)
+                        if not pq_ok:
+                            _note_entry_block(code, "价格门未过(现价不够低)")
+                            # 价格门未过：本根 bar 不买，窗内继续等待（按标的 60s 节流，防刷屏）
+                            if _diag_due(code):
+                                log("[%s] 首仓信号成立但%s，继续等待（窗内每根bar重评）" % (code, pq_detail))
+                        elif not can_buy:
+                            _note_entry_block(code, "涨停价/涨跌停价未知，禁止买入")
+                            # up 可为 None/0(涨跌停价未知)：不能直接 %.2f 格式化，否则 TypeError
+                            if _diag_due(code):
+                                log("[%s] 首仓信号与价格门均通过，但处于涨停价%s，禁止买入，跳过"
+                                    % (code, ("%.2f" % up) if up else str(up)))
+                        else:
+                            # 4.1 账户级资金闸门：扣除其他标的已部署，避免并发买入超账户现金
+                            # AUD72：首仓计划额按情绪缩放（只减不加，默认中性/乐观=1.0）
+                            _plan = cfg["capital_cap"] * params["pyramid"][0] * _sent_scale_entry
+                            _lot_px = price * params["lot_size"]
+                            # 分批可行性：第 2 批买不到 1 手则退化为单笔（8 千元试跑口径走此路）
+                            _splittable = (SPLIT_MAX_BATCH > 1 and len(FIRST_SPLIT) > 1
+                                           and _plan * FIRST_SPLIT[1] >= _lot_px)
+                            _ratio0 = FIRST_SPLIT[0] if _splittable else 1.0
+                            cash_use = min(cash, _plan * _ratio0, _account_free_cash(code, cash))
+                            vol = calc_shares(cash_use, price, params["lot_size"], cash)
+                            # 2026-09-28 v5：calc_shares() 已改严格模式（以 cash_use 为上限、
+                            # 不足 1 手返回 0）。以下兜底恒不成立，仅保留作防御。
+                            # 2026-10-01 P3-4：兜底再限「1 手价 ≤ 本档预算」，防高价股 1 手破档位比例。
+                            if vol == 0 and cash_use >= _lot_px and _lot_px <= _plan + 1e-6:
+                                vol = params["lot_size"]
+                            if vol == 0:
+                                if _diag_due(code):
+                                    log("[%s] 首仓预算不足 1 手：闸门后可动用 %.0f 元 < 1 手 %.0f 元(@%.2f)，本次不下单"
+                                        % (code, cash_use, _lot_px, price))
+                            else:
+                                ok_cap, cap_reason = can_invest(cfg["capital_cap"], state["deployed"], vol * price)
+                                if not ok_cap:
+                                    if _diag_due(code):
+                                        log("[%s] 持仓限额：%s" % (code, cap_reason))
+                                else:
+                                    if _splittable:
+                                        _tag = "首仓第1/%d批" % SPLIT_MAX_BATCH
+                                    else:
+                                        _tag = "首仓"
+                                    if buy_shares(C, code, acct, price, vol, _tag + " " + first_reason,
+                                                  state, cap=cfg["capital_cap"]):
+                                        state["position_shares"] = vol
+                                        state["expected_shares"] = vol
+                                        state["total_cost"] = compute_buy_cost(vol, price)
+                                        state["deployed"] += compute_buy_cost(vol, price)   # AUD33：deployed 统一为含费投入口径
+                                        state["tier"] = 0
+                                        state["last_add_price"] = price
+                                        state["first_reason"] = first_reason
+                                        # v9 分批记账（随状态落盘，重启不丢）
+                                        state["first_batch_n"] = 1 if _splittable else SPLIT_MAX_BATCH
+                                        state["first_batch_px"] = price
+                                        state["first_batch_ts"] = time.time()
+                                        state["first_batch_amt"] = _plan
+                                        state["first_batch_date"] = _today   # AUD37：记录首仓第 1 批日期（续批仅限当日）
+                                        state["firstpos_date"] = _today   # 首批下单成功才落标记
+                                        _note_entry_block(code, "__OPENED__")
+                                        _tail = (" | 分批1/%d" % SPLIT_MAX_BATCH) if _splittable else ""
+                                        _vtxt = ("%.2f" % _vwap) if _vwap else "不可得"
+                                        log("[%s] 首仓成交(预期): %d股 @%.2f | 当日VWAP %s | %s | 价格门:%s"
+                                            % (code, vol, price, _vtxt, first_reason, pq_detail) + _tail)
+                                        # 2026-09-29 审计修复 M1：下单成功后立即落盘——
+                                        # 下单成功到 bar 末尾 save_state 之间的崩溃会丢持仓记录，
+                                        # 重启后按空仓处理可致重复开仓（双仓）。
+                                        save_state(code, state)
+        else:
+            # F-1(2026-10-17) 第十三轮独立审计·用户拍板落地：
+            # 删除 v8 单笔首仓分支（v9 分笔首仓已统一接管），消除双路径死代码 + 维护歧义。
+            # ENTRY_OPT_ENABLED=False 语义即"禁止开首仓"；持仓加仓/止盈/卖单不受影响。
+            if _diag_due("ENTRY_DISABLED"):
+                log("[%s] 首仓已被全局开关关闭(ENTRY_OPT_ENABLED=False)，不评估首仓信号" % code)
+
+    # ---- 持仓中：金字塔加仓 + 盘中阶梯加仓 ----
+    # P3-14(2026-10-01)：涨停卖出当日（limit_sell_date）禁止 M2/M3 再买入
+    elif (actual_vol > 0 and not state["paused"]
+          and state.get("limit_sell_date", "") != _today_str):
+        # R-C 修复(2026-09-28)：止盈卖出在途期间冻结加仓——卖出提交后券商持仓未落账，
+        # 若此时 M2/M3 触发会在卖出未完成时反向叠加买入。sell_pending_until 随状态落盘
+        # （重启不丢）；卖出落账后 _sync_state_to_actual 的 actual==0 分支重置状态，闸门自然解除。
+        if time.time() < state.get("sell_pending_until", 0.0):
+            _log_dup_guard(code, "止盈卖出在途(未确认落账)，本根bar暂停M2/M3加仓")
+            return
+        # 入场优化(v9)：首仓分批续批。优先级高于 M2/M3 —— 本根 bar 一旦续批下单即结束，
+        # 不再叠加金字塔/盘中阶梯通道，避免首仓未建满时多通道资金叠加。
+        # 常规续批：窗内 + 距首批>=SPLIT_GAP_MIN + 价格<=首批*(1+SPLIT_PRICE_TOL) + 信号仍成立；
+        # 兜底补齐：SPLIT_GUARANTEE_HHM 之后跳过价格门与间隔，按剩余占比一次下完（保证仓位到位）。
+        # 风控不变：仍走 verify_position_before_order 三方对账 + passorder 返回值检查。
+        if ENTRY_OPT_ENABLED:
+            # P2-1：续批信号同样使用已收盘 bar + 当日可复现日内跌幅
+            if split_followup(C, code, acct, state, price, cash, params, cfg, up, can_buy,
+                              _c_closes, _c_highs, _c_lows, _c_vols, day_drop=_day_drop_now,
+                              sent_scale=_sent_scale_entry, sent_block=_sent_block):
+                save_state(code, state)
+                return
+        # 金字塔加仓（M2）
+        # AUD1 修复(2026-10-03)：M3 台账落盘失败熔断联动——M2 当日额度写入同一份
+        # 台账（get_daily_ledger/save_m3），落盘失败同样暂停 M2（恢复自动解除）。
+        # F-2(2026-10-17) 第十三轮独立审计·用户拍板落地：
+        # M2 加仓持久化兑底：与 M3 (intraday_add) 行为保持一致。
+        # 状态写入连续失败时停 M2 加仓，防止下一根 bar 重读到过期 tier 重夏加同档。
+        if not _STATE_PERSIST_OK:
+            if _diag_due("M2_PERSIST"):
+                log("[%s] M2 状态持久化兑底(_STATE_PERSIST_OK=False)，本根 bar 停加仓" % code)
+            return
+        # AUD72：情绪门拦截 M2 金字塔加仓（仅买入侧；卖出/止盈/铁律不受影响）
+        if _sent_block:
+            if _sent_diag_due(code):
+                log("[%s] M2加仓被情绪门拦截：档位=%s(EWMA=%.2f)，仅暂停买入（卖出/止盈/铁律不受影响）"
+                    % (code, _sent.get("regime", "?"), _sent.get("ew", 0.0)))
+            save_state(code, state)
+            return
+        if _M3_PERSIST_OK and add_position_signal(state, price, params):
+            m3, _today = get_daily_ledger(code)
+            # AUD31(2026-10-07 铁律审计)：M3 的软暂停（单日触发档数上限）此前只拦 M3，
+            # M2 金字塔不受约束——当日盘中已触发 M3_SOFT_PAUSE_LEVELS 档后仍可继续 M2 加仓，
+            # 与「单日盘中加仓节奏受控」的设计意图不一致。这里让 M2 同样遵守软暂停。
+            if len(m3.get("triggered", [])) >= M3_SOFT_PAUSE_LEVELS:
+                if _diag_due("M2_M3_SOFT"):
+                    log("[%s] M2 加仓因 M3 软暂停联动跳过：今日已触发%d档(>=%d档)，M2 暂缓，等待企稳"
+                        % (code, len(m3["triggered"]), M3_SOFT_PAUSE_LEVELS))
+                save_state(code, state)
+                return
+            tier_idx = state["tier"] + 1
+            # 4.1 账户级资金闸门：扣除其他标的已部署，避免并发买入超账户现金
+            # AUD72：M2 档位金额按情绪缩放（只减不加）
+            cash_use = min(cash, cfg["capital_cap"] * params["pyramid"][tier_idx] * _sent_scale_add,
+                          _account_free_cash(code, cash))
+            vol = calc_shares(cash_use, price, params["lot_size"], cash)
+            # 修复(2026-08-28)：1 手兜底以闸门后金额判定，不再绕过账户级资金闸门
+            # 2026-10-01 P3-4：兜底再限「1 手价 ≤ 本档预算」，防高价股 1 手破档位比例
+            _m2_plan = cfg["capital_cap"] * params["pyramid"][tier_idx] * _sent_scale_add
+            _m2_lot_px = price * params["lot_size"]
+            if vol == 0 and cash_use >= _m2_lot_px and _m2_lot_px <= _m2_plan + 1e-6:
+                vol = params["lot_size"]
+            if can_buy and vol > 0:
+                # P0/O2：M2+M3 共享单日加仓额度（按标的独立）
+                used_now = m3["used"] + m3.get("m2_used", 0.0)
+                if used_now + vol * price > DAILY_ADD_CAP + 1e-6:
+                    log("[%s] 当日加仓总额度(M2+M3, %.0f元)已用尽(已用%.0f，本次%.0f)，M2加仓跳过"
+                        % (code, DAILY_ADD_CAP, used_now, vol * price))
+                else:
+                    ok_cap, cap_reason = can_invest(cfg["capital_cap"], state["deployed"], vol * price)
+                    if not ok_cap:
+                        log("[%s] 持仓限额：%s" % (code, cap_reason))
+                    elif buy_shares(C, code, acct, price, vol, "加仓第%d档" % tier_idx, state,
+                                    cap=cfg["capital_cap"]):
+                        state["position_shares"] += vol
+                        state["expected_shares"] += vol
+                        state["total_cost"] += compute_buy_cost(vol, price)
+                        state["deployed"] += compute_buy_cost(vol, price)   # AUD33：deployed 统一为含费投入口径
+                        state["tier"] = tier_idx
+                        state["last_add_price"] = price
+                        m3["m2_used"] = m3.get("m2_used", 0.0) + vol * price
+                        save_m3(code, m3)
+                        log("【买入】%s 金字塔加仓第%d档 %d股 @%.2f" % (_cn(code), tier_idx, vol, price))
+                        # 2026-09-29 审计修复 M1：下单成功后立即落盘（同首仓，防崩溃窗口双仓）
+                        save_state(code, state)
+
+        # 盘中阶梯加仓（M3）
+        intraday_add(C, code, acct, state, price, open_px, cash, params, cfg, up,
+                     sent_scale=_sent_scale_add, sent_block=_sent_block)
+
+    save_state(code, state)
+
+
+def handlebar(C):
+    """QMT 每根 bar 回调入口：遍历所有启用标的，各标的独立捕获异常互不牵连。"""
+    # 2026-10-01 P2-1：模块级 RLock——模型交易界面可能以多线程回调 handlebar，
+    # STATES/台账/在途登记/失败熔断均为共享可变状态，并发读改写无锁会丢失更新
+    # （并发重复下单/台账错乱）。RLock 允许同线程重入，串行化各标的 bar 处理。
+    # 2026-10-01 P3-7：锁提升到 for 循环整体——原实现锁在每标的粒度获取/释放，
+    # 多线程回调下各标的 bar 处理可交错，_account_free_cash 遍历 STATES 汇总其它
+    # 标的 deployed 时可能读到中间态；整循环持锁才真正达到「串行化各标的 bar 处理」。
+    # AUD47(2026-10-13)：日志句柄补建——若 init 异常未走到 _open_log_run，
+    # 常开句柄 _LOG_FP 仍为 None，每行日志会走 append/覆写降级通道（效率低且
+    # 沙箱可能拦截既存文件追加）。此处理式补建一次（每次运行最多一次），
+    # 使日志落盘恢复走稳定的常开句柄通道。仅影响日志通道，不改变任何交易逻辑。
+    global _LOG_FP_HEALED
+    if _LOG_FP is None and not _LOG_FP_HEALED:
+        _LOG_FP_HEALED = True
+        try:
+            _open_log_run()
+            if _LOG_FP is not None:
+                log("日志句柄补建成功(AUD47)")
+        except Exception:
+            pass
+    _heartbeat_tick()         # 存活打点：检测每 bar 执行，输出按状态门控（非交易日/非交易时段静默）
+    _mode_pending_recheck()   # 运行模式延迟补测（init 探测不到时首根 bar 补一次）
+    with _STATE_LOCK:
+        for sym in enabled_symbols():
+            code = sym["code"]
+            params = dict(PARAMS)
+            params.update(sym.get("param_overrides", {}) or {})
+            state = STATES.get(code)
+            if state is None:
+                state = load_state(code)
+                STATES[code] = state
+            # AUD76(2026-10-19)：人工接管标的不做自动买卖决策，仅保留诊断/盈亏汇总日志（纯日志零行为变更）
+            if code in manual_takeover_codes():
+                if _hdiag_due(code):
+                    try:
+                        _hdiag_log(C, code, params, state)
+                    except Exception:
+                        pass
+                if _pnl_display_due(code):
+                    try:
+                        _pnl_display_log(C, code, state)
+                    except Exception:
+                        pass
+                STATES[code] = state
+                continue
+            
+            try:
+                _handlebar_impl(C, code, sym, params, state)
+                # AUD45(2026-10-12)：每30分钟诊断汇总——列明标的为什么没买/没卖（纯日志，不影响交易）
+                if _hdiag_due(code):
+                    try:
+                        _hdiag_log(C, code, params, state)
+                    except Exception:
+                        pass
+                # AUD59(2026-10-14)：每30分钟持仓盈亏+已清仓盈亏汇总日志（纯日志，零行为变更）
+                if _pnl_display_due(code):
+                    try:
+                        _pnl_display_log(C, code, state)
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_err("handlebar 异常(标的 %s, 本次bar已跳过, 策略继续运行): %s" % (code, e))
+            _entry_block_summary(code)
+            STATES[code] = state
+
+
+# 2026-10-01 P2-1：模块级 RLock 定义（见 handlebar 注释；须在 init 前、模块加载时初始化）
+_STATE_LOCK = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# 11. 生命周期
+# ---------------------------------------------------------------------------
+STATES = {}
+
+
+def init(C):
+    """策略启动：订阅全部启用标的、按 code 加载各自状态。周期请在界面选择「1分钟」以便盘中加仓。"""
+    global _LOG_IN_NEST, _trade_mode_pending
+    # 写盘标记复位（2026-09-24）：若上次运行被 QMT 强杀而没走完 log() 的 finally，
+    # 该标记会残留为非 0，导致本次「QMT 界面日志完整、日志文件却是空的」。这里显式复位，
+    # 并把残留情况带进日志——若某次启动报「上次残留」，说明上一次是被异常终止的。
+    _nest_resid = _LOG_IN_NEST
+    _LOG_IN_NEST = 0.0
+    # 日志通道（2026-09-24）：建立本次运行的常开句柄 —— QMT 沙箱禁写「已存在的文件」，
+    # 只有「先把旧日志改名备份、再新建并持有句柄」这条路才能稳定落盘（见 _open_log_run）。
+    _open_log_run()
+    try:
+        log("==== init 开始 ====")
+        log("版本自检 | 策略版本=%s | 构建=%s（版本真源 STRATEGY_VERSION，与聚宽版/QMT交付件统一）"
+            % (STRATEGY_VERSION, STRATEGY_BUILD))
+        _mirror_restore_all()   # AUD38：启动自愈——主目录缺失文件从广发镜像目录补回
+        try:
+            C.set_universe([s["code"] for s in enabled_symbols()])
+        except Exception as e:
+            log("set_universe 异常(已忽略): %s" % e)
+        # 注意：广发 QMT 的 __PyContext 无 set_bar_period 方法，
+        # K 线周期必须通过模型交易界面选择（选 1 分钟），不能代码设置。
+        global STATES
+        STATES = {}
+        for sym in enabled_symbols():
+            STATES[sym["code"]] = load_state(sym["code"])
+        # P0-1 修复(2026-10-01)：恢复在途买单台账（与状态文件互为冗余的防重复开仓防线）；
+        # 首次 handlebar 时还会以券商委托为准复核/补建（_rebuild_pending_from_broker）
+        _pending_load()
+        _pnl_load()   # AUD59：加载已清仓盈亏台账（gf_pnl_history.json），重启不丢
+        # 状态自检（2026-09-24 21:07）：沙箱拦 open() 读已存在文件 → 此前状态回读
+        # 一直静默失败、每次重启归零（多标的版 save 的分桶合并同样会覆盖丢数据）。
+        # 此行显式报告回读结果（no-file / loaded / read-failed(原因)）。
+        log("状态自检 | 状态读取=%s | 文件=%s | 启用标的%d个"
+            % (_LS_STATUS.get("state") or "未知", os.path.abspath(STATE_FILE),
+               len(enabled_symbols())))
+        log("策略启动 | 标的数=%d | 模式=%s"
+            % (len(enabled_symbols()), PARAMS["signal_mode"]))
+        # AUD10 修复(2026-10-03)：参数版本指纹——PARAMS 全量哈希（_PARAM_FP）写入
+        # 各标的状态并在 init 比对：参数被修改但状态仍沿用旧参数时，仓位/额度/加档基准
+        # 全部错配且无任何提示（「改参数踩坑」的典型来源）。启动时醒目告警。
+        log("参数指纹 | %s | 参数集哈希=%s" % (STRATEGY_VERSION, _PARAM_FP))
+        for _s2c, _s2 in STATES.items():
+            if _s2.get("param_fp") and _s2["param_fp"] != _PARAM_FP:
+                log("【参数变更告警】标的%s 状态文件记录参数指纹 %s，当前参数集指纹 %s —— 参数已"
+                    "修改但沿用旧状态（旧仓位/旧当日额度/旧加档基准）。如为升级参数，建议"
+                    "核对持仓后重置状态；如为误改请恢复原参数。"
+                    % (_s2c, _s2["param_fp"], _PARAM_FP))
+            _s2["param_fp"] = _PARAM_FP
+        # 交易日自检（2026-09-25 新增）：_handlebar_impl 顶部新增交易日门控，
+        # 非交易日直接跳过所有逻辑。这里提前告知用户今天会不会真的跑交易。
+        _is_td, _td_src = is_trade_day()
+        _td_label = {"akshare": "akshare在线", "cache": "本地缓存",
+                     "weekend_fallback": "仅周末降级", "unknown": "无法确认(防御拦截)"}.get(_td_src, _td_src)
+        if _is_td:
+            log("交易日自检 | 今日%s为交易日 | 数据源=%s"
+                % (datetime.now().strftime("%Y-%m-%d"), _td_label))
+        else:
+            log("交易日自检 | 今日%s非交易日（周末/法定节假日/调休） | 数据源=%s —— "
+                "handlebar 将被交易日门控全程拦截，本次运行不会产生任何委托。"
+                % (datetime.now().strftime("%Y-%m-%d"), _td_label))
+        # 交易时段自检（2026-09-24 第七起事故）：_handlebar_impl 顶部的时段门控会让
+        # 非连续竞价时段的每一根 bar 直接 return。此前多次「收盘后启动 → 策略毫无动静」
+        # 需要用户反复猜测，这里在启动时就明确说清「本次运行会不会真的下单」。
+        _IN_SESS, _HHMMSS, _SESS_NAME = _session_now()
+        if _IN_SESS:
+            log("交易时段自检 | 当前 %s（%s）处于连续竞价时段，handlebar 正常处理交易逻辑。"
+                % (_HHMMSS, _SESS_NAME))
+        else:
+            log("交易时段自检 | 当前 %s（%s）非连续竞价时段 —— handlebar 将被顶部时段门控"
+                "全程拦截，本次运行不会产生任何委托（属正常保护，非故障）。"
+                "请于 09:30~11:29:59 / 13:00~14:59:59 启动模型以验证交易链路。"
+                % (_HHMMSS, _SESS_NAME))
+        # 持久化自检（2026-09-24）：QMT 内嵌环境下 __file__ 可能不可用、工作目录也可能无写权限，
+        # 会导致状态/日志静默不落盘（表现为「删了状态文件重启仍是全新」）。启动时显式打印实际
+        # 路径与目录可写性，用于确认到底该删哪一份状态文件。
+        try:
+            _probe = os.path.join(_BASE_DIR, ".wb_probe")
+            _pf = open(_probe, "w", encoding="utf-8")
+            _pf.write("ok")
+            _pf.close()
+            os.remove(_probe)
+            _wr = "可写"
+        except Exception as _e:
+            _wr = "不可写(%s)" % _e
+        log("持久化自检 | BASE_DIR=%s | 来源=%s | 目录%s | 状态文件=%s | 日志文件=%s | 写盘标记=%s"
+            % (_BASE_DIR, _BASE_DIR_SRC, _wr, STATE_FILE, TRADE_LOG,
+               ("上次残留已复位" if _nest_resid else "就绪")))
+        # AUD15 修复(2026-10-04)：BASE_DIR 兜底来源告警——env/file 命中为正常；
+        # 落到 fixed/cwd 说明 GF_BASE_DIR 未设置且脚本目录不可知（QMT 沙箱粘贴运行
+        # 的常态），状态/台账可能写到非预期目录与历史台账分裂，必须显式提醒。
+        if _BASE_DIR_SRC in ("fixed", "cwd"):
+            # 2026-10-08 降噪：目录可写时仅轻量提示（不再每次启动打「告警」）；
+            # 仅在目录不可写（真正风险）时才打告警并推送风险通知。
+            if _wr == "可写":
+                log("【目录提示】BASE_DIR 来源=%s（GF_BASE_DIR 未设置）—— 状态/台账/日志将写入 %s，请确认该目录为预期位置。"
+                    % (_BASE_DIR_SRC, _BASE_DIR))
+            else:
+                log("【目录兜底告警】BASE_DIR 来源=%s（GF_BASE_DIR 未设置且 __file__ 不可用），且目录%s ——"
+                    "状态/台账/在途单/日志将无法写入 %s，请设置环境变量 "
+                    "GF_BASE_DIR 指向本策略专用目录后重启，避免台账分裂与状态丢失。"
+                    % (_BASE_DIR_SRC, _wr, _BASE_DIR))
+                _notify_risk("basedir_fallback",
+                             "BASE_DIR 来源=%s 且目录%s，请设置 GF_BASE_DIR 指向预期目录" % (_BASE_DIR_SRC, _wr))
+        # IO 能力自检（2026-09-24）：QMT 内嵌环境的 IO 沙箱按操作类型放行/拦截，
+        # 曾出现「open(w) 可写、open(a) 被拒 → 日志与状态静默不落盘」。逐项实测并打印，
+        # 一次启动即可判定该环境允许哪些写操作，不必再靠猜。
+        try:
+            _cap = _io_probe()
+        except Exception:
+            _cap = {}
+        try:
+            _cwd = os.getcwd()
+        except Exception:
+            _cwd = "不可用"
+        # 2026-10-08 降噪：原每次启动逐项列 10 项探测结果，压缩为一行关键摘要（写通道+读通道）。
+        # 真正影响状态/日志落盘的是覆写新文件(写)与 ctypes(读)；其余为备用回退，不决定能否落盘。
+        log("IO能力自检 | 写通道=%s | 读通道=%s | 日志通道=%s | CWD=%s"
+            % ("OK" if _cap.get("overwrite") else "FAIL",
+               "OK" if _cap.get("read_ctypes") else "FAIL",
+               (_LOG_WRITE_MODE or "尚未写入"), _cwd))
+        if not _cap.get("read_ctypes"):
+            log("读通道提示 | ctypes Win32 通道也未放行 —— 状态回读在进程内无路可走，"
+                "load_state 将维持 read-failed（状态每次重启归零）。此时请以「外部持仓同步」"
+                "机制为准（bar 顶部会以券商实际持仓校准内部状态），并等待洗名/子进程探测结果。")
+        # 账号快照（2026-09-24）：模拟运行下客户端无委托查询界面，
+        # 资金/持仓/委托可见性只能从策略日志读取。仅 init 打印一次。
+        try:
+            _acct0 = resolve_account(C)
+            _cash0 = get_cash_safe(C, _acct0)
+            _mt_codes = manual_takeover_codes()
+            # AUD76(2026-10-19)：人工接管标的额度从策略预算中释放
+            _budget = sum(s["capital_cap"] for s in enabled_symbols()
+                        if s["code"] not in _mt_codes)
+            # 2026-09-30：隐藏实盘可用资金，仅展示策略预算与标的数
+            _auto_n = len([s for s in enabled_symbols() if s["code"] not in _mt_codes])
+            log("资金口径 | 自动管理标的%d个（人工接管%d个，额度已释放），策略总预算 %.0f 元 —— 仅按预算动用，超出部分不参与交易"
+                % (_auto_n, len(_mt_codes), _budget))
+            log("风控状态自检 | 硬止损=%s | 躺平回撤阈值=%.0f%%(仅暂停操作、不亏损卖出) | 单标的上限=%.0f%% | "
+                "每日M2+M3加仓上限=%.0f元 | M3软暂停档数=%d | 回放冷启动=%d根 | 首仓窗口=%s"
+                % (("关闭(None)" if PARAMS.get("hard_stop_dd_pct") is None else "开启"),
+                   PARAMS.get("max_drawdown_pct", 0.0) * 100.0,
+                   PARAMS.get("max_position_pct", 0.0) * 100.0,
+                   DAILY_ADD_CAP, M3_SOFT_PAUSE_LEVELS, _REPLAY_COLD_START_BARS,
+                   str(ENTRY_WINDOWS)))
+            log("情绪模块自检 | 启用=%s | 模式=%s | 门控=恐慌(%s)/狂热(%s) | 缩放=首仓(%s)/加仓(%s) | 指数=%s | 窗口=%d根 | EWMA=%d"
+                % (SENTIMENT_ENABLED, SENTIMENT_CFG.get("mode"),
+                   SENTIMENT_CFG.get("block_panic"), SENTIMENT_CFG.get("block_euphoric"),
+                   SENTIMENT_CFG.get("scale_entry"), SENTIMENT_CFG.get("scale_add"),
+                   SENTIMENT_CFG.get("index"), SENTIMENT_CFG.get("lookback"),
+                   SENTIMENT_CFG.get("ewma_span")))
+            # 可用资金不足提醒（2026-09-24 16:27/16:28 现场）：实盘模式下账户可用 0 元，
+            # 而总资产 741 万、证券市值 161 万。17:22 的全字段快照显示 m_dFrozenCash/
+            # m_dFrozenMargin/m_dBuyWaitMoney 全为 0，**排除「冻结」**——结合 17:22 属收盘后
+            # 清算时段，判定为日终清算期间柜台把可用资金报 0，次日开盘前恢复。
+            # 不做额外拦截（资金闸门本身会挡），但必须在启动日志里说清「现在买不进」的原因，
+            # 否则外部表现就是「策略静默不下单」，事后完全无从排查。
+            # 注意：本三引号块内不要写反斜杠转义引号（会被 Python 字面量提前吃掉），改用中文引号。
+            # 2026-09-30：不输出具体可用资金数值，仅提示是否充足
+            if _cash0 < _budget:
+                if _IN_SESS:
+                    _cash_note = ("（当前处于交易时段，可用资金理应可用；"
+                                  "若持续不足，需核对是否被冻结/占用）")
+                else:
+                    _cash_note = ("（当前 " + _HHMMSS + "（" + _SESS_NAME + "）为非交易时段，"
+                                  "实盘柜台在日终清算期间常把可用资金报为 0，通常次日开盘前"
+                                  "自动恢复，请勿据此判定资金异常）")
+                log(("资金口径提醒 | 可用资金不足以支撑策略总预算 %.0f 元 —— "
+                     "买入将被资金闸门拦截。"
+                     "常见原因：日终清算、尾盘逆回购占用、资金已用于其他交易。"
+                     % _budget) + _cash_note)
+            # 账号快照（2026-09-24）：模拟运行下客户端无委托查询界面，
+            # 资金/持仓/委托可见性只能从策略日志读取。仅 init 打印一次。
+            log("[账号快照] %s" % account_diag(_acct0))
+            # AUD3 启动自检(2026-10-03)：方向字段探测——has_live_buy_order 依赖方向
+            # 字段区分在途买单（48买/49卖）。字段名随 QMT 版本漂移时会整体失效且无
+            # 任何报错（防重复下单闸门被静默拆除）。启动时查一次委托列表，报告实际
+            # 命中的字段名与样本；无委托样本时提示运行期以日志为准。
+            try:
+                _ok_od, _arr_od = _td_query(_acct0, "ORDER")
+                _of_hit = {}
+                if _ok_od and _arr_od:
+                    for _od in _arr_od[:20]:
+                        for _f in ("m_nOffsetFlag", "m_strOffsetFlag", "m_nDirection", "m_dDirection"):
+                            _v = getattr(_od, _f, None)
+                            if _v is not None and str(_v) in ("48", "49"):
+                                _of_hit[_f] = _of_hit.get(_f, 0) + 1
+                if _of_hit:
+                    _of_desc = ", ".join("%s=%d条" % (k2, v2) for k2, v2 in sorted(_of_hit.items()))
+                    log("方向字段自检 | 委托方向字段命中: %s（48买/49卖）" % _of_desc)
+                elif _ok_od and _arr_od:
+                    log("方向字段自检 | 委托样本%d条但方向字段全缺省/异常 —— 请人工核对"
+                        "字段名，has_live_buy_order 将按 48(买单) 保守判定" % len(_arr_od))
+                else:
+                    log("方向字段自检 | 委托查询不可用或无样本（运行期以日志定位字段名）")
+            except Exception as _e2:
+                log("方向字段自检 | 探测异常(已忽略): %s" % _e2)
+            # 运行模式自检（2026-09-24 第五/六/七起事故根因固化，判定源优先级从高到低）：
+            # ① 框架自身日志末条 [trade]start <mode> mode —— 确定性结论（见 _probe_trade_mode）。
+            #    大QMT 原生框架把该行写进 <QMT_ROOT>/userdata/log/XtClient_FormulaOutput_日期.log。
+            #    AUD54(2026-10-13) 实测：该行在 init 自检之后约 3~4 秒才落盘（当日 15 次启动
+            #    100% 命中此规律），故 init 时读不到本次标记，只会读到上次运行的陈旧标记
+            #    （由下方 _MODE_STALE_SEC=60 陈旧闸门排除）。init 探测不到属必然、非故障。
+            # ② ContextInfo 上的候选字段名 —— xtquant 路径（miniQMT/AIO）才有
+            #    （qmttools/stgframe.py:25 写入 C.trade_mode）。
+            # ③ 两处都取不到时，退回「以界面首行标记为准」，稍后首次 handlebar 自动补测（实测命中率 100%）。
+            _tm_raw = None
+            _tm_from = ""
+            for _n in ("trade_mode", "trademode", "run_mode", "runmode", "trade_type"):
+                try:
+                    _v = getattr(C, _n, None)
+                except Exception:
+                    _v = None
+                if isinstance(_v, str) and _v.strip():
+                    _tm_raw, _tm_from = _v, _n
+                    break
+            _tm_attr = _tm_raw.strip().lower() if _tm_raw else ""
+            _tm_file, _tm_path, _tm_age, _tm_note = _probe_trade_mode()
+            _trade_mode = _tm_attr or _tm_file
+            # AUD11 修复(2026-10-03)：自检输出精简——只给结论与必要处置。
+            # AUD54 修复(2026-10-13)：如实描述时序——实测框架标记于 init 完成后约 3~4 秒
+            # 才落盘，故 init 处取不到属必然；去掉易被误读为故障的「未能自动判定」措辞，
+            # 改述为「本步不作结论、已安排首次 handlebar 自动补测」，并把探针的丢弃原因
+            # （如仅命中上次运行的陈旧标记）一并打出，便于日后诊断。
+            if _trade_mode == "trading":
+                log("运行模式自检 | trade_mode=trading（实盘），passorder 将发往券商。")
+            elif _trade_mode in ("simulation", "backtest"):
+                log("运行模式自检 | trade_mode=%s（%s），passorder 不会发往券商；"
+                    "请在「策略交易」界面把运行模式栏切到「实盘」并重启模型。"
+                    % (_trade_mode, "模拟" if _trade_mode == "simulation" else "回测"))
+            else:
+                _trade_mode_pending = True
+                _tm_hint = ("；探测明细：%s" % _tm_note) if _tm_note else ""
+                log("运行模式自检 | 框架模式标记约于 init 完成后 3~4 秒落盘，本步不作结论%s"
+                    "；已安排首次 handlebar 自动补测（实盘将打印 trade_mode=trading，"
+                    "模拟/回测将打印对应结论）。" % _tm_hint)
+        except Exception as e:
+            log("账号快照打印失败(已忽略): %s" % e)
+        # 数据就绪自检（2026-09-28 对齐母版；P1-5 修复 2026-10-01）：未就绪 -> 非阻塞告警
+        # （醒目日志 + 告警标志文件）并拦截交易；AUD36(2026-10-08 第四轮零预设独立审计)：
+        # 原 popup=True 会无视 GF_DATA_GATE_POPUP 开关直接弹无超时模态框卡死单线程，已修复
+        # ——现在是否弹窗唯一由环境变量 GF_DATA_GATE_POPUP=1 决定（默认不弹），此处传 None。
+        # 不得在此路径引入任何阻塞调用（单线程铁律）。
+        try:
+            data_gate_ready(C, [s2["code"] for s2 in enabled_symbols()], popup=None)
+        except Exception as _dge:
+            log("数据就绪自检异常(已忽略, 交易闸门将继续按 bar 检查): %s" % _dge)
+        log("==== init 完成 ====")
+    except Exception as e:
+        log_err("init 异常(策略已尽量继续待命): %s" % e)
+
+
+def stop(C):
+    """策略停止/关闭前：保存所有标的状态（清理逻辑）。
+    AUD6 修复(2026-10-03)：收盘停摆汇总——当日因涨跌停价获取失败而全天未交易的
+    标的，在停止时成段输出，避免「行情接口异常导致整天静默无委托」事后无从发现。"""
+    # AUD47(2026-10-13 零预设独立审计)：停摆汇总加交易日门控——
+    # 周末/法定节假日 QMT 也会调用 stop，若 _LIMIT_STALL 残留旧数据会在非交易日
+    # 误报「今日停摆」并推送无意义告警，污染风控事件日志。非交易日直接跳过。
+    _stall_td, _stall_src = is_trade_day()
+    if _stall_td:
+        _stall_today = datetime.now().strftime("%Y-%m-%d")
+        _stall_codes = sorted(c for c, d in _LIMIT_STALL.items() if d == _stall_today)
+        if _stall_codes:
+            log("【收盘停摆汇总】今日 %d 个标的因涨跌停价获取失败全天未交易：%s —— "
+                 "请检查客户端行情连接/合约信息下载，次日开盘自动恢复"
+                 % (len(_stall_codes), "/".join(_stall_codes)))
+            _notify_risk("stall_summary", "今日停摆标的: " + "/".join(_stall_codes))
+    with _STATE_LOCK:
+        for code, st in STATES.items():
+            save_state(code, st)
+        _pending_save()     # P0-1：停止前把在途台账落盘，重启后可恢复
+        _mirror_copy_trade_logs()   # AUD41：停止前做一次完整日志镜像（含 .1~.5）
+        log("策略停止，状态已保存")
+    _close_log_run()          # 关闭日志句柄，确保缓冲区落盘

@@ -1,0 +1,628 @@
+====================================================================================================
+GBK 交付版策略代码审计基线索引
+生成时间: 2026-10-21 11:13 (审计任务)
+====================================================================================================
+
+[文件] E:\桌面\666666\dxgp\zt_shrink_strategy_gbk.py
+[大小] 874773 字节
+[编码] GBK 解码成功
+[BOM] 无BOM
+[行尾] CRLF=14431, 纯LF=83
+[总行数] 14514
+[VERSION 常量] V2.6.146
+[AST 语法解析] 成功
+[模块级函数数] 327  [类数] 3
+
+----- 文件头 60 行（版本注释区） -----
+#coding:gbk
+"""
+涨停缩量低吸策略 (广发QMT策略交易端 内置Python框架版)
+================================================================
+# 版本号: V2.6.146             修改时间: 2026-10-21 11:11 (V2.6.145: 从V2.6.135 baseline恢复 + 叠加V2.6.138~142全部改动: HISTORY_BARS=120/G.hist缓存聚合零接口调用/日志大白话27+12处/panic→恐慌翻译/人话解读自动生成)
+#   (V2.6.137记录: 用户贴 21:55:54 的 V2.6.136 首轮日志。好消息: 跨代恢复按设计
+#    命中 —— "已恢复2700只(...)(跨代恢复: 盘内gen=1792503584.7, 本代gen=1792504554.1)"
+#    不再从 0 重攒。坏消息: 取数 107 秒就抛 AttributeError: 'list' object has no
+#    attribute 'get', 随后覆盖率0.0%, 整轮作废 —— 这是本版必须补的洞。)
+#   【根因】_sent_acc_load() 里两条还原分支形状不一致:
+#     v<2 分支: _box[c] = dict(_one)         -> {日期: {close, preClose}}  (dict)
+#     v>=2 分支._box[c] = _one               -> {日期: [close, preClose]}  (list)  <-- 错
+#   而消费端(13233整池重解析 / 11885落盘重解析)统一按 raw 处理:
+#     _bars_to_dict(v) 对 dict 输入原样返回, 于是 _row = [c, p],
+#     (_row or {}).get('close') -> AttributeError: 'list' object has no attribute 'get'
+#   同函数 v<2 分支的注释就写着"与 _bars_to_dict 同形状: {日期: {close, preClose}}",
+#   即 v>=2 分支从 V2.6.118(A) 压缩存储改造起就写错了, 一直没被跑到 ——
+#   V2.6.135 及以前"换代一律丢弃", 跨代恢复路径从未执行; V2.6.136 一打开就暴露。
+#   【修法】把 v>=2 的还原值改成 dict 形状, 与 v<2 分支完全一致。
+#   改完 _bars_to_dict + _row.get('close') 对两种来源(raw / 恢复)都能正确取值,
+#   落盘 _sent_acc_dump 的 _bars_to_dict(_rw) 也走同一条路, 闭环。
+#   只改形状, 不动任何阈值 / 判定 / 交易逻辑; 不动 date/cols/v 三道校验。
+# 版本号: V2.6.136             修改时间: 2026-10-20 21:52
+#   (V2.6.136记录: 用户贴 21:39:43 的 V2.6.135 首轮日志。核实出两件事 ——
+    ① 21:39:45 那组探针读数仍是【旧格式】(均摊0.2363秒/次=107.4倍, 没有"冻结N次
+       合计X秒"的分离), 且行号排在 21:39:44 的 after_init 之后 = 脚本重载时
+       V2.6.134 的取数线程并未退出, 它跑满 463 秒才打印。故那组数属旧代残留, 不能
+       用来验证 V2.6.135 的三处新输出(冻结分离 / 相位30秒模 / 间隔自动判读)。
+    ② 旧代的池子暴露了本版唯一要修的东西: 21:39:45 刚落盘 5098只(97.6% 达标),
+       21:40:12 新代就报"换代丢弃(盘内gen=1792502372.6, 本代gen=1792503584.7)"。
+       世代号的本职是 _gen_superseded() 里判"本线程是否已被新代取代"(V2.6.91),
+       拿来判累积池有效期是语义误用 —— 池内按数据日期存日线 close/preClose,
+       重启不改变其中任何一个字节。实测代价: 重建 5100 只需 4 轮 x 460 秒 ≈ 30 分钟,
+       期间覆盖率<90% 一律不采用本轮信号(21:28:32 那轮 68.9% 就被弃用、沿用隔夜
+       panic 档 —— 档位覆写仍生效, 但数据不是本轮实测的)。
+    本版只改这一处: gen 不等不再丢弃, 改为跨代恢复并在日志注明; date / cols / v
+    三道校验原样保留(换日、换字段口径、结构版本不符仍一律丢弃)。)
+#   (V2.6.118记录: 用户贴 16:03~16:13 的 V2.6.116 日志, 末两行是全场关键 ——
+#    16:11:11 "累积池落盘失败: 盘子过大 6.5MB > 6MB, 本次不落盘"
+#    16:13:51 "情绪取数线程已在运行(已运行300秒), 本轮跳过"
+#    【先说结论】6MB 上限与 90% 覆盖率门槛在数学上不可能同时满足, 这是个真 bug,
+#    不是参数没调好。根因是 L11742 那句注释 "md 里只留 close/preClose, 每只票 ~50 字节"
+#    —— 实测每只 2330 字节(81 天 x 每天约 30 字节), 估错了 47 倍。按 50 字节推出
+#    5226 只只需 261KB, 于是 6MB 看着像 23 倍余量; 真实体量: 3300只=7.3MB(日志 6.5MB,
+#    差异来自停牌日空档)、4200只=9.3MB、4704只(90%门槛)=10.4MB、5226只=11.6MB。
+#    也就是说: 取到能用的覆盖率, 文件必然超 6MB 被拒写; 取到能落盘的大小, 覆盖率必然不够。
+#    后果是累积池永远落不了盘 -> 每次重启从 0 重攒 -> 情绪长期沿用隔夜档位
+#    (今天用的是 20261019 sentiment=-1.16 regime=panic, 并施加"开盘等待30->45分钟、
+#    缩量阈值0.36->0.3"两项覆写, 都在实质性地推迟/抬高买入门槛)。
+#    【A】落盘上限 6MB -> 16MB, 并把 md 改成压缩存储: 旧结构 {code:{日期:[c,p]}}
+#    每只 81 个日期串各重复一次全是浪费; 新结构 = 全局 dates 池(只存一份) +
+#    {code:[c,p,c,p,...]} 按下标对齐, 缺日填 [0,0]。实测渲染体积 11.6MB -> 约 5.2MB,
+#    降幅约 55%; 16MB 对压缩后留 3 倍余量, 即便压缩分支退化按旧结构 11.6MB 也不撞墙。
+#    读写两侧同源改造: 落盘写 v=2, 读盘见 v>=2 走拆包, 否则按旧 dict 直读
+#    (保留旧分支是为了让"升级前落下的盘"升级后第一轮仍能恢复, 不必从 0 重攒)。
+#    【B】收尾 165 秒拆三段。_t_over 一直是"总耗时 - 已计六段"的残差, 16:07 那轮它成了
+#    六段最大项(165秒), 比解析(31秒)还高, 但里面装了什么没人说得清 —— 这正是 V2.6.115
+#    立六段口径时想消灭的那类黑洞, 只是黑洞从"48秒的固定开销"挪到了"165秒的收尾"。
+#    现切成: _dt_dump 落盘(V2.6.117 刚把整块挪到解析之后, 是新进项) / _dt_asm 组装
+#    (rows 组装+覆盖率判定+日志拼装) / _dt_rest 其余残差。三段之和 == 原 _t_over,
+
+----- VERSION 常量上下文 -----
+L00427:                                 # 2026-10-14用户确认开启: 创业板20%涨跌幅, 与"绝不止损"铁律冲突(一旦深套回本难度翻倍),
+L00428:                                 # 剔除更稳健; 只影响新买入选股范围, 不影响已持有仓位。
+L00429: VERSION = 'V2.6.146'    # 当前版本号(与启动日志和横幅展示一致; 改版需同步文件头版本注释)
+L00430: CHECK_INTERVAL = 30            # 盘中轮询间隔(秒, run_time策略状态)
+L00431: HEARTBEAT_LOG_SEC = 600       # 状态检查最短间隔(秒), 不是强制定时输出; 状态签名未变化时不刷新日志; 设0关闭状态快照
+L00432: HOURLY_REASON_LOG_SEC = 3600   # 2026-10-12新增: 每小时汇总日志间隔(秒): 打印本小时优选股未买入/持仓股未卖出的原因统计
+
+----- 情绪模块标记行（BEGIN/END/=====） -----
+L00040: #    16:13:51 "情绪取数线程已在运行(已运行300秒), 本轮跳过"
+L00047: #    后果是累积池永远落不了盘 -> 每次重启从 0 重攒 -> 情绪长期沿用隔夜档位
+L00800: _API_LOCK = threading.RLock()      # 审计P1-3: QMT客户端C接口全局互斥锁(情绪后台线程 vs 主线程)
+L00884: #   情绪后台线程与成交回报线程都会入队, 无锁会越过50条上限/丢消息
+L02082: # P3(V2.6.83): 过 sent_param —— 情绪恐慌档把 BUY_MIN_ELAPSED_MIN 覆写为 45 分钟时,
+L04008: n_raw = n_raw * sent_size_mult()   # 情绪模块L4: 过热收缩单仓(数据未就绪时乘数=1.0, 58b口径不变)
+L04333: # V2.6.78 P1-1: 情绪+退潮 合并检查(都执行, 原因不丢失)
+L05521: #   2026-10-20 00:23 实测: 情绪取数并发抢接口, 8 秒只下 153 只, 余下约 22 秒纯空转,
+L05580: #   2000 的整数倍上, 但每轮实际只推进约 250 只(8秒预算被并发的情绪取数拖住), 于是
+L05588: #   当时情绪取数在并发抢接口), 但日志里没有任何时间账可对;
+L05903: #   这样 _sent_fetch_from_cache() 就能拿到三维情绪数据(涨跌广度/涨停比例/成交额)
+L08823: # 情绪模块L1: 恐慌/狂热/极端事件闸门(数据未就绪时不拦截)
+L11556: # 情绪模块: 启动初始化(仅置状态+日志; V2.6.61 R2: 数据刷新延后至定时器首轮, 不阻塞宿主init)
+L11740: #   紧接着 【情绪降级中性: 数据不可用】, 情绪模块从启动第一秒就死掉, 且永远不恢复。
+L11805: #   真正的当代判成旧代(2026-10-20 11:31 实盘就是这么把情绪模块弄死的)。
+L11990: # V2.6.128(A): 情绪解析窗口内主线程一律空跑, 不抢后台取数线程的 CPU。
+L12047: #   ready=False, 与同一秒的"信号刷新"行互相矛盾(像情绪没起来)。现区分三态:
+L12116: # V2.6.65: 启动一次性提示收尾强制落盘。这4行(参数指纹/情绪指纹/参数校验/配置)
+L12137: sent_daily_refresh()    # 情绪模块: 每交易日刷新(滞后1日, 失败仅日志不阻断)
+L12185: # ===== 情绪模块(单文件合并) BEGIN =====
+L12187: # 情绪模块(单文件合并 V2.6.59): 市场情绪 L1-L4 信号融合
+L12190: #   * 情绪只做【买入过滤 / 仓位缩放 / 止盈增强】, 绝不产生任何止损指令;
+L12193: #   * 日频情绪强制滞后1个交易日(shift(1)), 当日收盘数据次一交易日才可用;
+L12198: _SENTIMENT_ON = True                     # 情绪模块总开关(False=完全中性, 供回归对照)
+L12202: # ---- 情绪常量(全部 SENT_ 前缀, 不进入宿主 param_fingerprint) ----
+L12204: SENT_LAG_DAYS = 1                        # 日频情绪滞后交易日数(铁律勿改)
+L12228: 'enh_strength': 0.3,                 # L2 情绪增强强度(规则型买入无技术评分通道, 保留常量)
+L12237: SENT_SIZE_MIN_MULT = 0.7                 # 情绪缩放后的最低仓位乘数(防过度收缩)
+L12239: SENT_MONITOR_MAX_STALE_DAYS = 5          # 情绪数据最大允许陈旧交易日数
+L12243: SENT_INDEX_SYMBOL = '000001.SH'          # 情绪指数: 上证指数成交额(内置行情字段)
+L12254: SENT_STATE = {}                          # 情绪运行状态(运行时字典)
+L12256: # V2.6.106(方案9): 情绪取数跨轮累积容器。
+L12261: #   _sent_use_last_good() 沿用上一次成功信号, 情绪被冻结。
+L12275: # V2.6.113(C): 累积池落盘 —— 重启不再从 0 重攒情绪样本
+L12277: #   按当前 ~1500 只/轮 需要 4~6 轮(约 1.5~2 小时)才够 90%, 于是【开盘时情绪一定
+L12461: #   约 4 轮 x 460 秒, 期间覆盖率<90% 全部不采用, 等于情绪退化成隔夜信号。
+L12538: #   情绪模块永久静默冻结(日志只有一行, 手机也不推送), 全程无人察觉。
+L12540: _SENT_FETCH_LOCK = None              # 情绪取数互斥锁(非阻塞; 保证同一时刻只有一个取数线程在跑)
+L12567: # 情绪日志(挂到宿主 log, 失败静默)
+L12807: # 情绪参数指纹(sha256前12位, 独立于宿主指纹)
+L12823: # 情绪取数(仅QMT内置接口; 任一关键失败返回 None)
+L12832: # 纯 Python 聚合(不依赖 pandas); 任一关键步骤失败 -> 返回 None(情绪中性, 不影响原策略)
+L12838: # 方案(用户确认): 独立后台线程取数, 主线程立即返回(情绪暂未就绪=中性, 不阻塞交易);
+L12870: #   错3: 写成"情绪模块会全天中性", 但它只跳过【本轮】, 后续 timer_poll
+L13128: #   最多只取到 28%~34%, 永远够不到 -> 情绪信号被冻结在隔夜值。
+L13134: #   "明明取到 600 只、零失败"的好样本被丢掉, 退回用隔夜情绪 —— 那比小样本更危险
+L13202: #   直接 return 却已写死标记 -> sent_daily_refresh 当天不再重试, 情绪全天中性
+L13223: # V2.6.76(第十二轮审计问题4): 连续降级强提醒 —— 旧版只写单行本地日志, 情绪模块连续瘫痪
+L13224: # 多日也无人知晓(宿主数据质量有 notify_enqueue 推手机, 情绪模块没有)。
+L13246: #   情绪模块永久静默冻结"的隐患。
+L13363: # V2.6.108: 被取代时清掉累积挂起标记, 否则下一轮按 1800 秒退避, 情绪整天不恢复。
+L13482: #   情绪取数又从旁边再催 300 次单只调用。
+L13505: # 涨停家数占合成情绪指数33%权重, 该偏差会直接带偏 L1闸门/L3分层/L4仓位缩放。
+L13507: # 宁可多计不可漏计(方向偏保守: 情绪偏高->更易触狂热闸门->少买而非多买)。
+L14076: #   宁可小样本也不要用隔夜情绪(那是用昨天的恐慌做今天的买入决策)。
+L14242: # 在已完成交易日序列(升序, 不含今天)上计算情绪信号; 无法计算返回 None
+L14324: # 判断情绪数据最近完成日是否过期(交易日历优先, 缺失时自然日宽松兜底)
+L14385: # V2.6.61 R2修复(2026-10-17用户确认方案A): 启动绝不在init中同步拉取情绪数据 ——
+L14390: #   情绪信号为日频滞后1日数据, 晚数分钟就绪无任何损失; 首次刷新延后至
+L14401: # 每交易日刷新情绪信号(滞后1日); V2.6.76: 取数已移交后台线程(见 sent_fetch_all_data),
+L14429: # V2.6.96(1): 日线下载期间不发起情绪取数 —— 两者都是"全市场批量打行情接口"。
+L14430: #   2026-10-20 00:22:33 那次启动, 5226 只日线下载与 5226 只情绪取数同一秒并发:
+L14431: #   下载每轮 8 秒只推进 153 只(正常 400), 情绪取数从常态约 40 秒拖到 151~195 秒,
+L14434: #   推迟期间买入侧维持中性(不拦买、不缩放仓位), 与"情绪未就绪"同档。
+L14436: #   但下载卡死不能把情绪一起拖死: 推迟满 30 分钟就告警并强行发起。
+L14514: # ===== 情绪模块(单文件合并) END =====
+
+----- 关键函数定位（kind, name, start-end, 匹配方式） -----
+func     is_at_loss                   L02604 - L02628  [==]
+func     param_fingerprint            L02952 - L02970  [==]
+func     calc_size                    L03956 - L04065  [==]
+func     can_open_new                 L04280 - L04342  [==]
+func     load_universe                L05466 - L05483  [==]
+func     step_day_init                L05485 - L05662  [~]
+func     _autofix_sector_data         L07449 - L07455  [==]
+func     risk_increase_allowed        L08792 - L08826  [==]
+func     buy_stock                    L09262 - L09491  [==]
+func     _run_round_unlocked          L10333 - L10981  [==]
+func     init                         L11519 - L11708  [==]
+func     heartbeat_path               L11714 - L11722  [~]
+func     heartbeat_tick               L11812 - L11935  [~]
+func     after_init                   L11962 - L11972  [~]
+func     handlebar                    L11974 - L11987  [==]
+func     _timer_poll_unlocked         L12018 - L12183  [==]
+func     sent_fetch_all_data          L12825 - L12900  [==]
+func     __init__                     L06341 - L06342  [~]
+
+----- 模块级大写常量（前 120 个） -----
+L00241: ACCOUNT_ID
+L00245: TRADE_MODE
+L00250: DRY_RUN
+L00254: SLIPPAGE_PCT
+L00279: STRATEGY_CASH_CAP
+L00282: LOG_TO_FILE
+L00284: LOG_FLUSH_INTERVAL
+L00285: LOG_FLUSH_MAX
+L00286: EMERGENCY_MODE
+L00290: EMERGENCY_FILE
+L00291: EMERGENCY_FILE_REFRESH_SEC
+L00295: SELL_CTX_SETTLE_GRACE_SEC
+L00298: CSV_ENCODING
+L00301: TARGET_BUY_AMOUNT
+L00302: FIXED_BUY_VOL
+L00303: MAX_DAILY_PICKS
+L00304: DAILY_BUY_PICKS
+L00305: MAX_DAILY_BUYS_LIVE
+L00306: MAX_DAILY_BUYS_PAPER
+L00307: BUY_BLOCK_TAG
+L00308: EXT_MERGE_INTERVAL_SEC
+L00314: MAX_DAILY_SELLS_LIVE
+L00315: MAX_DAILY_SELLS_PAPER
+L00318: MAX_POSITIONS
+L00320: MIN_BUY_AMOUNT
+L00321: DYN_PROFIT_FEE
+L00322: MIN_DAILY_AMOUNT
+L00328: DAILY_VOL_UNIT
+L00329: AUTO_VOL_UNIT
+L00330: TICK_VOL_UNIT
+L00334: TICK_UNIT_BLOCK_DAYS
+L00335: TICK_UNIT_ACK
+L00339: BUY_ORDER_TIMEOUT_SEC
+L00340: BUY_ORDER_ERR_MAX
+L00343: PYRAMID_MIN_DAY_MINUTES
+L00344: PYRAMID_MIN_DAY_BARS
+L00345: ORDER_CB_DEDUP_SEC
+L00346: BUY_ORDER_RETRIES
+L00348: SELL_ORDER_TIMEOUT_SEC
+L00349: SELL_ORDER_ERR_MAX
+L00350: SELL_ORDER_RETRIES
+L00351: CANCEL_CONFIRM_GRACE_SEC
+L00352: PRICE_CAGE_PCT
+L00353: LIMIT_BAND_PCT
+L00357: LIMIT_BAND_BSE
+L00358: LIMIT_BAND_KEB
+L00359: LIMIT_BAND_ST
+L00360: PORTFOLIO_FUSE_LOSS
+L00363: FUSE_PAUSE_TRDAYS
+L00364: FUSE_AUTO_RESUME_DAYS
+L00369: PORTFOLIO_HARD_DD_PCT
+L00370: STATE_BAK_KEEP
+L00371: REBUY_GAP_TRDAYS
+L00372: LOOKBACK_TRDAYS
+L00373: ONLY_SINGLE_ZT
+L00374: ZT_VOL_RATIO_MIN
+L00375: BASE_VOL_RATIO_MIN
+L00376: BUY_WINDOW_START
+L00377: BUY_WINDOW_END
+L00378: SHRINK_BUY_RATIO
+L00382: BUY_TOL
+L00383: EXPAND_SELL_RATIO
+L00388: SELL_TOL
+L00389: ZT_TURNOVER_MIN
+L00390: ZT_TURNOVER_MAX
+L00391: SELL_TURNOVER_TOP
+L00392: MARKET_TIDE_CHECK
+L00393: MARKET_TIDE_INDEX
+L00394: MARKET_TIDE_LOOKBACK
+L00395: MARKET_TIDE_DROP_PCT
+L00396: EARLY_SELL_VOL_MULT
+L00397: EARLY_SELL_BLOCK_MIN
+L00398: EARLY_SELL_END_MIN
+L00399: SELL_GIVEUP_RETRY_SEC
+L00400: MARKET_TIDE_ERR_BLOCK_N
+L00401: MARKET_TIDE_RETRY_SEC
+L00409: STALL_CONFIRM_ON
+L00410: STALL_MAX_GAIN_PCT
+L00411: STALL_NEWHIGH_DAYS
+L00412: STALL_NEWHIGH_GAP
+L00413: SELL_MIN_PROFIT_PCT
+L00414: NEVER_STOP_LOSS
+L00418: MAX_HOLD_TRDAYS
+L00419: BUY_MIN_ELAPSED_MIN
+L00420: SELL_MIN_ELAPSED_MIN
+L00421: MAX_PULLBACK_FROM_ZT
+L00422: MAX_CHASE_OVER_ZT
+L00423: EXCLUDE_ST
+L00424: EXCLUDE_ST_HIST
+L00425: EXCLUDE_KCB
+L00426: EXCLUDE_CYB
+L00429: VERSION
+L00430: CHECK_INTERVAL
+L00431: HEARTBEAT_LOG_SEC
+L00432: HOURLY_REASON_LOG_SEC
+L00436: HB_PNL_TRIGGER_PCT
+L00439: CAL_RETRY_SEC
+L00441: SESSION1_START
+L00442: SESSION1_END
+L00443: TICK_STALE_MAX_SEC
+L00444: VOL_COMPLETE_MIN_RATIO
+L00448: VOL_IMPLAUSIBLE_MIN_RATIO
+L00449: BACKFILL_1M_ENABLE
+L00450: BACKFILL_1M_MIN_INTERVAL
+L00451: BACKFILL_1M_MIN_BARS
+L00452: BACKFILL_1M_TRIGGER_RATIO
+L00455: SESSION2_START
+L00456: SESSION2_END
+L00457: PHASE_NAME
+L00459: HISTORY_BARS
+L00460: MIN_HISTORY_BARS
+L00461: DOWNLOAD_CHUNK
+L00462: DOWNLOAD_START_DAYS
+L00463: RESCREEN_INTERVAL
+L00464: MIN_UNIVERSE_FOR_SCREEN
+L00465: MIN_UNIVERSE_RATIO
+L00473: NEW_BUY_DATA_BLOCK
+L00474: DATA_BLOCK_RATIO
+L00475: STALE_BLOCK_ROUNDS
+L00476: DATA_ALERT_PUSH
+
+----- 全部函数索引（module-level 与类内，共 327 个） -----
+L00260 - L00272  _slippage_for
+L00748 - L00771  _prod_of
+L00773 - L00777  fee_profile
+L00802 - L00813  _api
+L00907 - L00948  _flush_log
+L00950 - L00965  log
+L00968 - L00981  _fmt_param
+L00984 - L01001  trigger_log
+L01006 - L01021  _account_suffix
+L01023 - L01027  _split_name
+L01029 - L01038  _join_base
+L01040 - L01043  state_path
+L01046 - L01056  run_log_path
+L01058 - L01071  file_base_dir
+L01074 - L01125  startup_selftest
+L01128 - L01131  names_cache_path
+L01133 - L01155  _flush_names_cache
+L01157 - L01181  _load_names_cache
+L01183 - L01237  _merge_external_daily_buys
+L01239 - L01268  _disk_adjust_daily_buy
+L01270 - L01340  save_state
+L01342 - L01359  _state_load_candidates
+L01376 - L01480  load_state
+L01482 - L01490  _blocked_ip
+L01492 - L01537  notify
+L01539 - L01559  notify_enqueue
+L01561 - L01575  notify_drain
+L01579 - L01594  elapsed_trading_minutes
+L01596 - L01623  _proj_vol_ratio
+L01625 - L01642  _df_to_rows
+L01645 - L01689  _bars_to_dict
+L01691 - L01699  _f
+L01700 - L01737  _bar_dt_min
+L01740 - L01760  _bar_dt_date
+L01763 - L01769  _is_today_bar
+L01772 - L01804  _bardate_loose
+L01807 - L01833  _normalize_ts
+L01835 - L01864  _is_bar_fresh
+L01869 - L01948  _subscribe_quotes
+L01951 - L02232  _refresh_ticks
+L02235 - L02237  _round2
+L02239 - L02274  flush_st_coef_note
+L02277 - L02311  _zt_coef
+L02313 - L02348  inst_name
+L02350 - L02361  is_st_name
+L02364 - L02374  name_known
+L02377 - L02394  excluded
+L02396 - L02401  can_trade
+L02403 - L02413  probe_account
+L02415 - L02433  _band_pct
+L02435 - L02446  day_limit_prices
+L02448 - L02482  clamp_order_price
+L02484 - L02496  held_trd_days
+L02498 - L02504  fmt_pnl
+L02507 - L02510  ledger_path
+L02512 - L02527  _transfer_rate_for
+L02529 - L02538  fee_buy
+L02540 - L02551  fee_sell
+L02553 - L02559  pos_vol
+L02561 - L02569  pos_cost
+L02571 - L02586  min_profit_pct
+L02588 - L02602  net_pnl_if_sell
+L02604 - L02628  is_at_loss
+L02630 - L02637  loss_cost_basis
+L02639 - L02657  pnl_stat
+L02659 - L02672  pnl_meta
+L02674 - L02686  pnl_base_asset
+L02688 - L02691  pnl_mode_note
+L02693 - L02695  pnl_pct_of
+L02697 - L02699  fmt_money
+L02701 - L02705  pnl_level
+L02707 - L02724  _safe_rollback_placeholder
+L02727 - L02750  _keep_partial_hold
+L02752 - L02759  is_own_position
+L02761 - L02766  mode_pos_count
+L02768 - L02779  pnl_alert
+L02781 - L02799  loss_data_source_alert
+L02801 - L02831  used_capital
+L02834 - L02853  abs_cap_left
+L02855 - L02903  data_gate
+L02905 - L02916  data_quality_alert
+L02932 - L02940  _fp_keys
+L02943 - L02949  _fp_calc
+L02952 - L02970  param_fingerprint
+L02973 - L02982  code_fingerprint
+L02984 - L03021  ledger_append
+L03023 - L03040  ledger_buy
+L03042 - L03080  ledger_sell
+L03082 - L03091  _deal_diag_log
+L03094 - L03107  _deal_field_sample
+L03110 - L03159  _find_manual_sell_deal
+L03162 - L03257  estimate_close
+L03259 - L03276  alert_open
+L03278 - L03297  alert_close
+L03299 - L03315  alert_unreal
+L03317 - L03332  alert_portfolio
+L03344 - L03362  _ledger_today_counts
+L03365 - L03380  _ledger_today_pnl
+L03383 - L03417  alert_daily_report
+L03419 - L03488  pnl_halfhour_report
+L03490 - L03501  pnl_brief
+L03504 - L03533  strategy_status_signature
+L03535 - L03542  strategy_pnl_value
+L03544 - L03572  status_log_if_changed
+L03574 - L03604  pnl_startup_note
+L03606 - L03641  pnl_tick
+L03643 - L03829  _pnl_tick_unlocked
+L03832 - L03858  size_equity
+L03860 - L03900  atr_of
+L03902 - L03912  last_close_of
+L03914 - L03949  sell_stall_confirmed
+L03951 - L03954  calc_stop_pct
+L03956 - L04065  calc_size
+L04067 - L04078  lock_state
+L04080 - L04085  trd_days_after
+L04087 - L04100  pause_until
+L04102 - L04110  in_pause
+L04112 - L04191  market_tide_check
+L04193 - L04194  pos_limit
+L04196 - L04217  _parse_emergency_text
+L04219 - L04256  emergency_mode_effective
+L04258 - L04278  emergency_block
+L04280 - L04342  can_open_new
+L04344 - L04368  settle_pending
+L04370 - L04418  settle_after_close
+L04421 - L04427  handoff_records
+L04429 - L04431  is_handoff
+L04433 - L04440  handoff_credit
+L04447 - L04456  eff_cash
+L04458 - L04487  exit_price_needed
+L04489 - L04498  trap_metrics
+L04500 - L04516  trap_gap_ok
+L04518 - L04521  manual_alert_path
+L04523 - L04558  write_manual_todo
+L04560 - L04598  fire_trap_alert
+L04600 - L04635  blacklist_add
+L04637 - L04664  blacklist_remove_tagged
+L04666 - L04697  handoff_position
+L04699 - L04720  monitor_handoff
+L04722 - L04750  check_trap
+L04752 - L04770  clear_handoff
+L04772 - L04795  trap_sweep
+L04798 - L04801  mark_sold
+L04803 - L04818  rebuy_blocked
+L04825 - L04836  _mode_buckets
+L04838 - L04845  daily_buy_cap
+L04847 - L04851  daily_sell_cap
+L04853 - L04870  daily_buy_state
+L04872 - L04888  daily_sell_state
+L04890 - L04903  daily_buy_blocked
+L04905 - L04914  daily_buy_left
+L04916 - L04923  daily_sell_left
+L04925 - L04932  daily_buy_done
+L04934 - L04941  daily_sell_done
+L04943 - L04962  daily_add_state
+L04964 - L04971  daily_add_done
+L04973 - L04989  query_order_status
+L04991 - L05012  note_order_id
+L05014 - L05020  _oid_sort_key
+L05022 - L05028  _code_with_suffix
+L05030 - L05045  disp_code
+L05047 - L05049  disp
+L05051 - L05056  buy_scope_ok
+L05058 - L05060  sell_scope_ok
+L05062 - L05089  is_strategy_target
+L05091 - L05107  scope_refuse
+L05108 - L05115  _clock_session_note
+L05117 - L05147  _today_has_bars
+L05149 - L05207  load_local_calendar
+L05211 - L05249  log_day_phase_banner
+L05252 - L05439  refresh_calendar
+L05441 - L05448  is_trading_day
+L05450 - L05464  market_phase
+L05466 - L05483  load_universe
+L05485 - L05662  step_day_init
+L05664 - L05738  detect_volume_unit
+L05741 - L05775  detect_tick_volume_unit
+L05778 - L05785  _tick_unit_blocked
+L05788 - L05794  _tick_to_daily_scale
+L05796 - L05958  load_history
+L05961 - L05964  blacklist_path
+L05966 - L06012  load_blacklist
+L06014 - L06017  st_hist_path
+L06019 - L06071  load_st_hist
+L06073 - L06080  _risk_ex_sig_of
+L06083 - L06089  _risk_ex_cur_sig
+L06092 - L06095  risk_exclude_path
+L06097 - L06101  _risk_exclude_candidates
+L06103 - L06120  _risk_src_err_short
+L06123 - L06319  load_risk_exclude
+L06360 - L06379  _http_risk
+L06382 - L06394  _suffix_risk
+L06397 - L06401  _norm_risk
+L06404 - L06405  _iso_risk
+L06408 - L06434  _fetch_st_risk
+L06437 - L06459  _fetch_st_local_risk
+L06462 - L06494  _fetch_lift_risk
+L06497 - L06523  _fetch_decrease_risk
+L06526 - L06551  _fetch_loss_risk
+L06554 - L06598  _fetch_ann_risk
+L06601 - L06682  _auto_risk_exclude
+L06684 - L06704  risk_excluded
+L06707 - L06829  get_recent_net_profit
+L06832 - L06899  _float_market_cap_yi
+L06902 - L06910  _last_close_of
+L06913 - L06954  _float_share
+L06957 - L06969  get_recent_net_profit_cached
+L06972 - L06984  _ts_to_date
+L06987 - L06990  _fin_short
+L06993 - L07069  _extract_fin_rows
+L07072 - L07101  _pick_latest_fin_row
+L07104 - L07138  _download_qmt_financial_data
+L07139 - L07140  _probe_financial_data
+L07142 - L07160  ensure_financial_data
+L07162 - L07175  _mark_loss_degraded
+L07178 - L07196  _mark_mcap_degraded
+L07199 - L07215  _fin_unknown_rd
+L07218 - L07306  risk_blocked
+L07309 - L07335  ma10_held_after_zt
+L07338 - L07351  zt_low_held
+L07353 - L07360  ma5_of_comp
+L07362 - L07384  detect_confirm_entry
+L07386 - L07406  detect_ma5_break
+L07409 - L07411  _norm_code
+L07413 - L07447  _fetch_sector_members
+L07449 - L07455  _autofix_sector_data
+L07457 - L07543  load_hot_sectors
+L07545 - L07560  stock_in_hot_sector
+L07563 - L07594  financial_data_recheck
+L07596 - L08021  screen_candidates
+L08023 - L08079  rescreen_if_needed
+L08082 - L08087  dry_cash_delta
+L08089 - L08095  _own_hold_count
+L08097 - L08170  query_account
+L08173 - L08186  _estimate_base_vol
+L08188 - L08595  reconcile_positions
+L08597 - L08607  day_pos
+L08610 - L08614  in_high_zone
+L08617 - L08642  pyramid_alloc
+L08645 - L08653  pyramid_remain
+L08656 - L08680  _set_buy_ctx
+L08683 - L08789  pyramid_add
+L08792 - L08826  risk_increase_allowed
+L08828 - L09155  run_pyramid_adds
+L09159 - L09171  _norm_reason
+L09174 - L09202  hourly_reason_note
+L09205 - L09221  _hourly_fmt
+L09224 - L09259  hourly_reason_dump
+L09262 - L09491  buy_stock
+L09493 - L09529  sell_stock
+L09532 - L09745  place_sell_order
+L09748 - L09763  _own_order
+L09765 - L09803  _find_order_obj
+L09805 - L09814  sell_order_obj
+L09817 - L09834  cancel_sell_order
+L09837 - L09957  handle_unfilled_sell
+L09963 - L09970  buy_order_obj
+L09972 - L09991  cancel_buy_order
+L09993 - L10202  handle_unfilled_buy
+L10204 - L10331  run_round
+L10333 - L10981  _run_round_unlocked
+L10984 - L11031  order_callback
+L11033 - L11059  _sim_fill_prob_dynamic
+L11061 - L11156  _sim_deal
+L11158 - L11176  _deal_key
+L11178 - L11405  deal_callback
+L11412 - L11494  orderError_callback
+L11496 - L11516  print_summary
+L11519 - L11708  init
+L11714 - L11722  heartbeat_path
+L11745 - L11749  gen_path
+L11752 - L11773  gen_announce
+L11776 - L11809  _gen_superseded
+L11812 - L11935  heartbeat_tick
+L11938 - L11955  log_guard
+L11962 - L11972  after_init
+L11974 - L11987  handlebar
+L11989 - L12016  timer_poll
+L12018 - L12183  _timer_poll_unlocked
+L12296 - L12301  _sent_acc_path
+L12304 - L12429  _sent_acc_dump
+L12432 - L12530  _sent_acc_load
+L12546 - L12563  _exc_text
+L12566 - L12574  _sent_wlog
+L12578 - L12580  _sent_regime_cn
+L12583 - L12622  _sent_human_readable
+L12625 - L12685  _sent_fetch_from_cache
+L12689 - L12698  _sent_today
+L12701 - L12711  _sent_f
+L12714 - L12728  _sent_quantile
+L12731 - L12744  _sent_roll
+L12747 - L12763  _sent_ewma
+L12766 - L12768  _sent_col_series
+L12771 - L12785  _sent_z_last
+L12788 - L12800  _sent_tanh
+L12806 - L12819  sent_fingerprint
+L12825 - L12900  sent_fetch_all_data
+L12903 - L12928  _sent_override_note
+L12931 - L12934  _sent_cache_path
+L12937 - L12957  _sent_cache_load
+L12960 - L12983  _sent_cache_save
+L12986 - L13069  _sent_use_last_good
+L13072 - L13108  _sent_fetch_md_batch
+L13111 - L13219  _sent_apply_rows
+L13222 - L13239  _sent_degrade_alert
+L13242 - L13259  _sent_fetch_worker
+L13262 - L14204  _sent_fetch_sync
+L14213 - L14220  _winsorize_list
+L14223 - L14238  _sent_comp_note
+L14241 - L14320  _sent_compute
+L14323 - L14339  _sent_fresh_enough
+L14345 - L14397  sent_bootstrap
+L14400 - L14464  sent_daily_refresh
+L14467 - L14476  _sent_reset_ready
+L14479 - L14483  sent_gate_skip
+L14486 - L14493  sent_size_mult
+L14496 - L14503  sent_param_overrides
+L14506 - L14511  sent_param
+L06341 - L06342  __init__
+L06344 - L06354  add
+L06356 - L06357  to_dict
+L06718 - L06724  _date_field
+L06725 - L06726  _report_date
+L06727 - L06728  _announce_date
+L06852 - L06857  _mcap_bump
+L13508 - L13509  _lu_th
+L01531 - L01532  redirect_request
+
+----- 全部类索引 -----
+L00794 - L00795  class _G
+L06339 - L06357  class _BagExcl
+L01529 - L01532  class _NoRedirect

@@ -1,0 +1,365 @@
+L12901| 
+L12902| 
+L12903| def _sent_override_note(ovs):
+L12904|     # V2.6.85: 把 L3 档位覆写翻译成人话(原名 旧值->新值(方向)), 供日志使用。
+L12905|     #   旧版只打 overrides=BUY_MIN_ELAPSED_MIN=45;SHRINK_BUY_RATIO=0.3, 全是英文键和
+L12906|     #   裸数字, 看不出"买点窗口被推后15分钟"; 且启动行打印的是原始参数, 与实际生效值
+L12907|     #   不一致, 用户无法判断今天到底按哪套跑。未知键按原样输出, 不隐藏。
+L12908|     if not isinstance(ovs, dict) or not ovs:
+L12909|         return ''
+L12910|     _meta = {
+L12911|         'SHRINK_BUY_RATIO': ('缩量阈值', '越低越严: 要求当日量能更小才算缩量到位'),
+L12912|         'BUY_MIN_ELAPSED_MIN': ('开盘等待分钟', '越长越晚: 开盘后要等更久才允许买入'),
+L12913|         'EXPAND_SELL_RATIO': ('放量止盈倍数', '越低越易卖: 达到更小的量能倍数即止盈'),
+L12914|     }
+L12915|     _out = []
+L12916|     for _k in sorted(ovs.keys()):
+L12917|         _nm, _dir = _meta.get(_k, (_k, '未收录的键, 按原值使用'))
+L12918|         _old = globals().get(_k, None)
+L12919|         try:
+L12920|             _os = ('%.2f' % float(_old)).rstrip('0').rstrip('.')
+L12921|         except Exception:
+L12922|             _os = str(_old)
+L12923|         try:
+L12924|             _ns = ('%.2f' % float(ovs[_k])).rstrip('0').rstrip('.')
+L12925|         except Exception:
+L12926|             _ns = str(ovs[_k])
+L12927|         _out.append('%s %s->%s (%s)' % (_nm, _os, _ns, _dir))
+L12928|     return ' | '.join(_out)
+L12929| 
+L12930| 
+L12931| def _sent_cache_path():
+L12932|     """上一次成功信号缓存路径(带账号隔离后缀): 与状态文件同目录, 仅纯文件名"""
+L12933|     stem, ext = _split_name(SENT_CACHE_FILE)
+L12934|     return _join_base(stem + _account_suffix() + ext)
+L12935| 
+L12936| 
+L12937| def _sent_cache_load():
+L12938|     """读上一次成功信号(磁盘缓存); 任何异常返回 {}, 绝不影响主流程。
+L12939|     V2.6.87: "覆盖率不足沿用上次信号"需要跨重启可用, 而 SENT_STATE 不落盘(重启即丢),
+L12940|       故单独存一份小缓存。sent_bootstrap 会 clear SENT_STATE, 因此用字典内的
+L12941|       cache_loaded 标记做"进程内只读一次"(clear 后自动重读, 正好读到最新文件)。"""
+L12942|     try:
+L12943|         if SENT_STATE.get('cache_loaded'):
+L12944|             return SENT_STATE.get('cache') or {}
+L12945|         SENT_STATE['cache_loaded'] = True
+L12946|         _d = {}
+L12947|         _p = _sent_cache_path()
+L12948|         if os.path.exists(_p):
+L12949|             with open(_p, 'r', encoding='utf-8') as _fh:
+L12950|                 _d = json.load(_fh)
+L12951|         if not isinstance(_d, dict):
+L12952|             _d = {}
+L12953|         SENT_STATE['cache'] = _d
+L12954|         return _d
+L12955|     except Exception:
+L12956|         SENT_STATE['cache'] = {}
+L12957|         return {}
+L12958| 
+L12959| 
+L12960| def _sent_cache_save(sig):
+L12961|     """成功算出信号后落盘(原子替换); 失败静默 —— 缓存丢了大不了下次无历史可沿用。"""
+L12962|     try:
+L12963|         _d = {
+L12964|             'date': sig.get('date'),
+L12965|             'sentiment': sig.get('sentiment'),
+L12966|             'regime': sig.get('regime'),
+L12967|             'gate_skip': bool(sig.get('gate_skip')),
+L12968|             'size_mult': sig.get('size_mult'),
+L12969|             'overrides': dict(sig.get('overrides') or {}),
+L12970|             'events': {'frenzy': bool(sig.get('evt_frenzy')),
+L12971|                        'panic': bool(sig.get('evt_panic'))},
+L12972|             'ver': VERSION,
+L12973|             'ts': time.time(),
+L12974|         }
+L12975|         _p = _sent_cache_path()
+L12976|         _tmp = _p + '.tmp'
+L12977|         with open(_tmp, 'w', encoding='utf-8') as _fh:
+L12978|             json.dump(_d, _fh, ensure_ascii=True, indent=1)
+L12979|         os.replace(_tmp, _p)
+L12980|         SENT_STATE['cache'] = _d
+L12981|         SENT_STATE['cache_loaded'] = True
+L12982|     except Exception:
+L12983|         pass
+L12984| 
+L12985| 
+L12986| def _sent_use_last_good(why):
+L12987|     """V2.6.87(2B): 数据不完整时沿用上一次成功信号; 无历史/已过期才降级中性。
+L12988|     为什么不是"照算": _sent_compute 会按可用分量重新归一化权重(3分量变2分量), 等于
+L12989|       悄悄换了一条指数, 而 gate/regime 阈值是按3分量标定的 —— 实测同一数据日 20261016:
+L12990|       18批全过时 sentiment=-1.27, 只剩4批时 -1.00, 正好压在 panic 阈值 -1.0 上,
+L12991|       档位会在临界点随机跳变, 恐慌档的"买点推后+缩量更严"保护可能随时消失。
+L12992|     返回 True=已沿用(交易侧继续用该档位), False=无法沿用(已降级中性)。"""
+L12993|     global _SENTIMENT_READY
+L12994|     try:
+L12995|         _g = _sent_cache_load()
+L12996|         _d = str(_g.get('date') or '')
+L12997|         if not _d:
+L12998|             _sent_degrade_alert(why + '(无历史信号可沿用)')
+L12999|             _sent_reset_ready(why + '; 无历史信号可沿用')
+L13000|             return False
+L13001|         if not _sent_fresh_enough(_d, _sent_today()):
+L13002|             _sent_degrade_alert(why + '(历史信号已过期 last=%s)' % _d)
+L13003|             _sent_reset_ready(why + '; 历史信号已过期(last=%s)' % _d)
+L13004|             return False
+L13005|         # V2.6.99(3): 沿用信号加严的交易日龄上限(2个交易日; 局部算式, 不新增常量):
+L13006|         #   _sent_fresh_enough 的 5 交易日上限针对"数据通道整体"合理, 但"沿用"是把旧档位
+L13007|         #   (含panic/贪婪覆写)直接套到今天的买入上 —— 拿2天前的贪婪档开盘买入比中性更危险。
+L13008|         #   交易日历缺失时按自然日折半近似; 日龄算不出来时保持旧行为(沿用)。
+L13009|         _age_td = None
+L13010|         try:
+L13011|             _cal = getattr(G, 'calendar', None)
+L13012|             _cal = [str(x)[:8] for x in _cal] if _cal else []
+L13013|             _td = _sent_today()
+L13014|             if _cal and _td in _cal and _d in _cal:
+L13015|                 _age_td = _cal.index(_td) - _cal.index(_d)
+L13016|             else:
+L13017|                 import datetime as _dt
+L13018|                 _age_td = (_dt.datetime.strptime(_td, '%Y%m%d') -
+L13019|                            _dt.datetime.strptime(_d, '%Y%m%d')).days // 2
+L13020|         except Exception:
+L13021|             _age_td = None
+L13022|         if _age_td is not None and not (0 <= _age_td <= 2):
+L13023|             _sent_degrade_alert(why + '(沿用信号过旧 last=%s, 超2个交易日)' % _d)
+L13024|             _sent_reset_ready(why + '; 沿用信号过旧(last=%s, >2个交易日)' % _d)
+L13025|             return False
+L13026|         SENT_STATE['ready'] = True
+L13027|         SENT_STATE['date'] = _d
+L13028|         SENT_STATE['sentiment'] = _g.get('sentiment')
+L13029|         SENT_STATE['regime'] = _g.get('regime')
+L13030|         SENT_STATE['gate_skip'] = bool(_g.get('gate_skip'))
+L13031|         SENT_STATE['size_mult'] = _g.get('size_mult', 1.0)
+L13032|         SENT_STATE['overrides'] = dict(_g.get('overrides') or {})
+L13033|         SENT_STATE['events'] = _g.get('events') or {}
+L13034|         SENT_STATE['err'] = '沿用上次信号: ' + why
+L13035|         SENT_STATE['last_sig_ts'] = time.time()
+L13036|         SENT_STATE['carried'] = True
+L13037|         _SENTIMENT_READY = True
+L13038|         # 注意: 绝不写 last_fetch_date —— 沿用不等于"今天已成功刷新", 必须让
+L13039|         #   SENT_RETRY_SEC 继续节流重试真实数据(V2.6.85 修的就是"降级即锁日"这个坑)。
+L13040|         _now = time.time()
+L13041|         if (_now - float(SENT_STATE.get('carry_log_ts') or 0.0)) >= SENT_CARRY_LOG_SEC:
+L13042|             SENT_STATE['carry_log_ts'] = _now
+L13043|             _sent_wlog('[情绪提醒] %s; 本次继续使用上次算出的信号(日期=%s,情绪值=%.2f,氛围=%s), '
+L13044|                        '非本次实测值 —— 档位/覆写仍生效, 但请检查QMT行情接口(登录/多实例争用)'
+L13045|                        % (why, _d, _f(_g.get('sentiment')), _sent_regime_cn(_g.get('regime'))))
+L13046|             # V2.6.93(2): 旧版只说"档位/覆写仍生效", 从不写覆写成了什么。实测
+L13047|             #   2026-10-19 23:38 沿用 20261016 的 sentiment=-1.27 / regime=panic,
+L13048|             #   而 panic 档覆写 = SHRINK_BUY_RATIO 0.30 + BUY_MIN_ELAPSED_MIN 45,
+L13049|             #   等于次日按"缩量要求更严 + 开盘要等45分钟"跑, 买点大概率全被卡掉,
+L13050|             #   日志里却只有"覆写仍生效"这种零信息量的话。现在把覆写翻译成人话:
+L13051|             #   哪个参数、从多少到多少、往哪个方向偏。
+L13052|             _ovc = _sent_override_note(_g.get('overrides') or {})
+L13053|             if _ovc:
+L13054|                 _sent_wlog('       该信号带了【%s】模式的参数调整: %s —— 如果你觉得不该这样调, '
+L13055|                            '请先修好行情接口让取数恢复, 或临时把 _SENTIMENT_ON 置 False'
+L13056|                            % (_sent_regime_cn(_g.get('regime')), _ovc))
+L13057|             else:
+L13058|                 _sent_wlog('       该信号没带【%s】模式的参数调整: 用策略默认值'
+L13059|                            % (_sent_regime_cn(_g.get('regime')),))
+L13060|             try:
+L13061|                 notify_enqueue('[情绪模块][告警] %s。本次已沿用上一次成功信号(数据日=%s, '
+L13062|                                '氛围=%s), 市场热度过滤仍在生效但已非实时值; 请检查QMT行情接口'
+L13063|                                '/是否多实例同时运行。' % (why, _d, _sent_regime_cn(_g.get('regime'))))
+L13064|             except Exception:
+L13065|                 pass
+L13066|         return True
+L13067|     except Exception as _e:
+L13068|         _sent_reset_ready(why + '; 沿用历史信号异常: %s' % _e)
+L13069|         return False
+L13070| 
+L13071| 
+L13072| def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc=None):
+L13073|     """取一批行情; 失败逐级拆分重试(300 -> 100 -> 30)。返回 {code: raw}。
+L13074|     box = [成功只数, 失败只数, 拆分重试次数, 失败样本(最多3条)]
+L13075|     V2.6.87: 旧版一批300只失败就整批丢弃(continue), 且异常文本常为空, 实测18批里
+L13076|       14批失败 -> 只剩23%的票且全在前几个代码段。现在失败自动拆分重试,
+L13077|       并把"取到多少/丢了多少"如实统计给上层。"""
+L13078|     try:
+L13079|         _md = _api(C.get_market_data_ex, fields, codes, '1d', start, '',
+L13080|                    cnt, 'front', False, False)
+L13081|         if not isinstance(_md, dict):
+L13082|             raise RuntimeError('返回类型非dict(%s)' % type(_md).__name__)
+L13083|         _n = 0
+L13084|         for _c in codes:
+L13085|             if _md.get(_c) is not None:
+L13086|                 _n += 1
+L13087|         box[0] += _n
+L13088|         box[1] += (len(codes) - _n)
+L13089|         # V2.6.106: 整批一次成功 -> 直接并入累积容器(acc); 空 DataFrame 不算取到。
+L13090|         if acc is not None and _n > 0:
+L13091|             for _c in codes:
+L13092|                 if _md.get(_c) is not None:
+L13093|                     acc[_c] = _md[_c]
+L13094|         return _md
+L13095|     except Exception as _e:
+L13096|         _msg = _exc_text(_e)
+L13097|         _sz = 100 if depth <= 0 else 30
+L13098|         if depth >= 2 or len(codes) <= _sz:
+L13099|             box[1] += len(codes)
+L13100|             if len(box[3]) < 3:
+L13101|                 box[3].append('%d只: %s' % (len(codes), _msg))
+L13102|             return {}
+L13103|         box[2] += 1
+L13104|         _out = {}
+L13105|         for _j in range(0, len(codes), _sz):
+L13106|             _out.update(_sent_fetch_md_batch(C, codes[_j:_j + _sz], fields,
+L13107|                                              start, cnt, box, depth + 1, acc))
+L13108|         return _out
+L13109| 
+L13110| 
+L13111| def _sent_apply_rows(rows):
+L13112|     # V2.6.76(第十二轮审计问题2+4): 后台线程取数成功后在此汇总落状态。
+L13113|     # 问题4一并落地: 连续降级达 SENT_DEGRADE_ALERT_DAYS 个交易日 -> notify_enqueue 强提醒一次。
+L13114|     global _SENTIMENT_READY
+L13115|     try:
+L13116|         _t = _sent_today()
+L13117|         # V2.6.87(2B): 覆盖率不足 -> 沿用上一次成功信号(无历史才降级中性)。
+L13118|         #   ratio 为 None 表示"根本没走到行情取数阶段"(由下游 rows 空判断处理)。
+L13119|         _cov = SENT_STATE.get('cover') or {}
+L13120|         _ratio = _cov.get('ratio')
+L13121|         try:
+L13122|             _ratio = float(_ratio) if _ratio is not None else None
+L13123|         except Exception:
+L13124|             _ratio = None
+L13125|         # V2.6.96(4): 预算命中时门槛临时提到 98%(见 _sent_fetch_sync 同名注释)。
+L13126|         #   两处必须用同一个口径, 否则会出现"取数侧说不采用、应用侧照用"的自相矛盾。
+L13127|         # V2.6.103(修复1-B): 预算截断 != 取数失败。旧口径把门槛提到 98%, 而被截断的轮次
+L13128|         #   最多只取到 28%~34%, 永远够不到 -> 情绪信号被冻结在隔夜值。
+L13129|         #   新口径: 截断时改判"零失败 + 样本量够不够"(样本已由修复1-A 保证均匀):
+L13130|         #     零失败 且 已取到 >= 800 只(约全市场 15%, 抽样误差约±3.5%) -> 采用本轮实测值;
+L13131|         #     否则仍维持 98% 门槛 -> 沿用上一次成功信号(保守不变)。
+L13132|         # V2.6.104(4): 800 -> 480, 与取数侧 _cov_min 逐字同义。双实例共存后取数必然被
+L13133|         #   预算截断, 12 秒/批的通道上 110 秒最多啃下 8 批 = 2400 只; 卡 800 会让
+L13134|         #   "明明取到 600 只、零失败"的好样本被丢掉, 退回用隔夜情绪 —— 那比小样本更危险
+L13135|         #   (用昨天的恐慌做今天的买入决策)。480 只 = 全市场 9.2% 均匀抽样, 误差约 +-4.3%。
+L13136|         _min_cov = SENT_COVERAGE_MIN
+L13137|         # ---- V2.6.106(方案9): 覆盖口径从'本轮'改为'跨轮累积' ----
+L13138|         #   旧逻辑(budget_hit 时 fail==0 且 ok>=480 即放行)已被累积机制取代:
+L13139|         #   每轮只从'还没取到的'里取, 多轮自然拼满, 不必再为预算截断单开例外。
+L13140|         #   累积达到 SENT_COVERAGE_MIN -> 出信号; 未达到 -> 挂起(沿用上次成功信号),
+L13141|         #   等下一轮继续拼。既不冻结, 也不用 34% 的偏样本去做买卖决策。
+L13142|         _acc_r = _cov.get('acc_ratio')
+L13143|         try:
+L13144|             _acc_r = float(_acc_r) if _acc_r is not None else None
+L13145|         except Exception:
+L13146|             _acc_r = None
+L13147|         if _acc_r is not None:
+L13148|             _ratio = _acc_r
+L13149|         if _ratio is not None and _ratio < _min_cov:
+L13150|             _SENT_ACC['pend_rounds'] = int(_SENT_ACC.get('pend_rounds') or 0) + 1
+L13151|             SENT_STATE['acc_pending'] = True
+L13152|             _sent_use_last_good(
+L13153|                 '累积覆盖率%.1f%%(<%.0f%%下限; 本轮新取%d只/累积%d只/全市场%d只/失败%d只/重试%d次/第%d轮)'
+L13154|                 % (_ratio * 100.0, _min_cov * 100.0,
+L13155|                    int(_cov.get('round_ok') or 0), int(_cov.get('acc_ok') or 0),
+L13156|                    int(_cov.get('req') or 0), int(_cov.get('fail') or 0),
+L13157|                    int(_cov.get('retry') or 0), int(_cov.get('rounds') or 0)))
+L13158|             return
+L13159|         SENT_STATE['acc_pending'] = False
+L13160|         if not rows:
+L13161|             _sent_degrade_alert('数据不可用')
+L13162|             _sent_reset_ready('数据不可用')
+L13163|             return
+L13164|         rows = rows[-SENT_HIST_MAX:]
+L13165|         SENT_STATE['rows'] = rows
+L13166|         # 滞后N日(V2.6.83 P3): 旧实现硬编码"今日之前", 等于永远滞后1日 —— SENT_LAG_DAYS
+L13167|         #   写了但从不生效(改了常量也没用)。现按常量截断: lag=1 与原口径完全一致,
+L13168|         #   lag>1 时把最新已完成的那 (lag-1) 个交易日也排除(只用更早的已完成日)。
+L13169|         # 滞后1日: 只用今天之前已完成的交易日(防未来函数)
+L13170|         comp = [r for r in rows if r['date'] < _t]
+L13171|         _lag = max(1, int(SENT_LAG_DAYS or 1))
+L13172|         if _lag > 1 and comp:
+L13173|             comp = comp[:-(_lag - 1)] if len(comp) >= _lag else []
+L13174|         if not comp:
+L13175|             _sent_degrade_alert('暂无昨日完成数据')
+L13176|             _sent_reset_ready('暂无昨日完成数据')
+L13177|             return
+L13178|         if not _sent_fresh_enough(comp[-1]['date'], _t):
+L13179|             _sent_degrade_alert('情绪数据陈旧(last=%s)' % comp[-1]['date'])
+L13180|             _sent_reset_ready('情绪数据陈旧(last=%s)' % comp[-1]['date'])
+L13181|             return
+L13182|         sig = _sent_compute(comp)
+L13183|         if sig is None:
+L13184|             _sent_degrade_alert('信号计算不可用')
+L13185|             _sent_reset_ready('信号计算不可用')
+L13186|             return
+L13187|         global _SENTIMENT_READY
+L13188|         SENT_STATE['ready'] = True
+L13189|         SENT_STATE['date'] = sig['date']
+L13190|         SENT_STATE['sentiment'] = sig['sentiment']
+L13191|         SENT_STATE['regime'] = sig['regime']
+L13192|         SENT_STATE['gate_skip'] = sig['gate_skip']
+L13193|         SENT_STATE['size_mult'] = sig['size_mult']
+L13194|         SENT_STATE['overrides'] = sig['overrides']
+L13195|         SENT_STATE['events'] = {'frenzy': sig['evt_frenzy'], 'panic': sig['evt_panic']}
+L13196|         SENT_STATE['err'] = ''
+L13197|         SENT_STATE['last_sig_ts'] = time.time()
+L13198|         _SENTIMENT_READY = True
+L13199|         SENT_STATE['degrade_days'] = 0          # 问题4: 成功即清零降级计数
+L13200|         # V2.6.85修复: "今日已刷新"只在信号真正算出后才锁定。旧版在函数入口就写
+L13201|         #   last_fetch_date, 之后 4 个降级分支(无昨日数据/数据陈旧/信号算不出/异常)
+L13202|         #   直接 return 却已写死标记 -> sent_daily_refresh 当天不再重试, 情绪全天中性
+L13203|         #   (L1闸门/L3覆写/L4缩仓全部失效), 日志只有一行"降级中性", 极难察觉。
+L13204|         SENT_STATE['last_fetch_date'] = _t
+L13205|         _sent_cache_save(sig)      # V2.6.87: 成功信号落盘, 供下次数据残缺时沿用
+L13206|         SENT_STATE['carried'] = False
+L13207|         _ovs = ';'.join('%s=%s' % (k, sig['overrides'][k]) for k in sorted(sig['overrides'].keys())) or '-'
+L13208|         _sent_wlog('情绪信号已更新: 日期=%s, 情绪值=%.2f(越负越恐慌/越正越亢奋), 氛围=%s, 是否跳开买入闸门=%s, 仓位缩放=%.2f倍, 微调参数=%s'
+L13209|                    % (sig['date'], sig['sentiment'], _sent_regime_cn(sig['regime']), sig['gate_skip'],
+L13210|                       sig['size_mult'], _ovs))
+L13211|         _sent_wlog('信号详细构成(涨跌比例z值,涨停比例z值,成交额z值): %s' % _sent_comp_note(sig))
+L13212|         _ov_note = _sent_override_note(sig['overrides'])
+L13213|         if _ov_note:
+L13214|             _sent_wlog('当前【%s】模式,参数自动调整: %s' % (_sent_regime_cn(sig['regime']), _ov_note))
+L13215|         _sent_wlog('人话解读: %s' % _sent_human_readable(sig))
+L13216|     except Exception as _e:
+L13217|         _SENTIMENT_READY = False
+L13218|         SENT_STATE['err'] = str(_e)
+L13219|         _sent_wlog('情绪信号计算出了问题(按中性处理,不影响交易): %s' % _e)
+L13220| 
+L13221| 
+L13222| def _sent_degrade_alert(why):
+L13223|     # V2.6.76(第十二轮审计问题4): 连续降级强提醒 —— 旧版只写单行本地日志, 情绪模块连续瘫痪
+L13224|     # 多日也无人知晓(宿主数据质量有 notify_enqueue 推手机, 情绪模块没有)。
+L13225|     # 现按"连续降级交易日数"累计, 达阈值推一次微信/钉钉, 恢复后清零。
+L13226|     try:
+L13227|         _t = _sent_today()
+L13228|         _last = SENT_STATE.get('degrade_date')
+L13229|         if _last != _t:
+L13230|             SENT_STATE['degrade_date'] = _t
+L13231|             SENT_STATE['degrade_days'] = int(SENT_STATE.get('degrade_days', 0) or 0) + 1
+L13232|         _n = int(SENT_STATE.get('degrade_days', 0) or 0)
+L13233|         if _n >= SENT_DEGRADE_ALERT_DAYS:
+L13234|             notify_enqueue('[情绪模块][强提醒] 情绪数据已连续%d个交易日不可用(%s)。'
+L13235|                            '期间情绪信号全部按【中性】处理(不拦截买入/仓位不缩放), 主策略不受影响, '
+L13236|                            '但市场热度的情绪过滤已失效。请检查 QMT 内置行情接口是否正常。'
+L13237|                            % (_n, why))
+L13238|     except Exception:
+L13239|         pass
+L13240| 
+L13241| 
+L13242| def _sent_fetch_worker(_lock):
+L13243|     # 后台线程体: 真正取数 -> 计算 -> 写 SENT_STATE(含连续降级计数与强提醒)
+L13244|     # V2.6.77(防御加固): 锁由主线程创建后随线程参数传入, 不再回头查 SENT_STATE ——
+L13245|     #   即使 SENT_STATE 被清空, 也能正确释放当初实际持有的那把锁, 不会出现"锁泄漏后
+L13246|     #   情绪模块永久静默冻结"的隐患。
+L13247|     try:
+L13248|         rows = _sent_fetch_sync()
+L13249|         _sent_apply_rows(rows)
+L13250|     except Exception as _e:
+L13251|         _sent_wlog('情绪后台线程出了问题(按中性处理): %s' % _e)
+L13252|         _sent_reset_ready('后台线程异常:%s' % _e)
+L13253|     finally:
+L13254|         SENT_STATE['fetching'] = False      # V2.6.87(4): 无论成功失败都要落标记, 否则永远显示"取数中"
+L13255|         try:
+L13256|             if _lock is not None:
+L13257|                 _lock.release()
+L13258|         except Exception:
+L13259|             pass
+L13260| 
+L13261| 
+L13262| def _sent_fetch_sync():
+L13263|     # V2.6.76(第十二轮审计问题2): 后台线程专用取数实现 —— 本函数即原 sent_fetch_all_data 的
+L13264|     #   取数主体, 逻辑一行未改, 仅改由后台守护线程调用, 主线程绝不直接调用。
+L13265|     # V2.6.90(1): 取数总预算起点。旧版只有预下载那 5 秒有预算, 主循环(拆批重试 x 2 轮,

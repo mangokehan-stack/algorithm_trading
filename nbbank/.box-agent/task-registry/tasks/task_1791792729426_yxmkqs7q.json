@@ -1,0 +1,79 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "artifact_ac4a9ad7fefa0a0b4aab3f7a",
+      "current_revision_id": "revision_962f4711715bf0900c4d3db9",
+      "filename": "gf_native_multi_state.json",
+      "kind": "data",
+      "mime": "application/json",
+      "rel_path": "gf_native_multi_state.json",
+      "revisions": [
+        {
+          "artifact_revision_id": "revision_962f4711715bf0900c4d3db9",
+          "produced_at": "2026-10-19T14:11:31+08:00",
+          "sha256": "727a3abe6337ee22d69df3855bc598650aef9fb44cd3425c6e245f5806fa9f88",
+          "size": 653,
+          "turn_id": "local_1792389722648_jofbxqur"
+        }
+      ]
+    },
+    {
+      "artifact_id": "artifact_8d2fce22b1e1bceaaedbfed8",
+      "current_revision_id": "revision_68b7028ffd93b53216ccfd69",
+      "filename": "gf_native_trade.log",
+      "kind": "file",
+      "mime": "application/octet-stream",
+      "rel_path": "gf_native_trade.log",
+      "revisions": [
+        {
+          "artifact_revision_id": "revision_68b7028ffd93b53216ccfd69",
+          "produced_at": "2026-10-19T14:11:31+08:00",
+          "sha256": "64726a2567248faf7a9148808f434f37cc2629f8c1de2f1e20b4e54421fd9c1d",
+          "size": 4754,
+          "turn_id": "local_1792389722648_jofbxqur"
+        }
+      ]
+    },
+    {
+      "artifact_id": "artifact_453cc45c32a58adbbfaf386c",
+      "current_revision_id": "revision_e2d1bacfdad3fe32c15fc21c",
+      "filename": "gf_qmt_native_multi_gbk.py",
+      "kind": "code",
+      "mime": "text/x-python",
+      "rel_path": "gf_qmt_native_multi_gbk.py",
+      "revisions": [
+        {
+          "artifact_revision_id": "revision_e2d1bacfdad3fe32c15fc21c",
+          "produced_at": "2026-10-19T14:22:52+08:00",
+          "sha256": "96be6f23ad897862d6feda8b50eae33dd0f1657e9c8f55a6dc6ace9b946e29a7",
+          "size": 388708,
+          "turn_id": "local_1792390823913_v9s6d3wq"
+        }
+      ]
+    },
+    {
+      "artifact_id": "artifact_98c1bc114b390ef2cf33230f",
+      "current_revision_id": "revision_db26398567ba32f1a76e79d9",
+      "filename": "audit_readonly_utf8.py",
+      "kind": "code",
+      "mime": "text/x-python",
+      "rel_path": "audit_v1251/audit_readonly_utf8.py",
+      "revisions": [
+        {
+          "artifact_revision_id": "revision_db26398567ba32f1a76e79d9",
+          "produced_at": "2026-10-19T15:26:56+08:00",
+          "sha256": "a24501a6db126ed37afd2476b4957da98a784ee946c6b38abe979a08f47d424a",
+          "size": 460922,
+          "turn_id": "local_1792394726182_lcxyjur8"
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-10-19T02:31:51.756817+00:00",
+  "current_turn_id": "local_1792394726182_lcxyjur8",
+  "execution_status": "error",
+  "schema_version": 3,
+  "session_id": "02b2f577-24a3-4d40-bd23-5558ba95fc60",
+  "task_id": "task_1791792729426_yxmkqs7q",
+  "updated_at": "2026-10-19T07:28:28.958089+00:00"
+}

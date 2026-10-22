@@ -1,0 +1,47 @@
+=== 备注后缀 NEW/ADD 的消费点 ===
+
+=== log / disp / trigger_log 定义 ===
+L908    def _flush_log(force=False):
+L951    def log(*a):
+L2769   def pnl_alert(text):
+L5031   def disp_code(s, name=''):
+L5048   def disp(s):
+
+=== deal_callback 中 rm / parts 的使用行 ===
+L11189  parts = [p.strip() for p in rm.split('|') if p.strip()]   # P1-8: 去空格/空段
+
+=== 情绪累积池 关键点 ===
+L68     版本号: V2.6.116             修改时间: 2026-10-20 16:00 (V2.6.116记录: 用户贴 15:56:24 的 V2.6.115 首份六段耗时日志。好消息是新口径真的产出了数据: 耗时287秒(列表0+等下载0+批内下载43+解析120+
+L71     版本号: V2.6.113             修改时间: 2026-10-20 15:35 (V2.6.113记录: 用户回"全部修复", 落地三项 —— 起因是 15:07 / 15:10 两轮 V2.6.112 日志: V2.6.112 新增的【最慢批】指标第一次戳破了
+L73     版本号: V2.6.111             修改时间: 2026-10-20 12:30 (V2.6.111记录: 用户贴 11:49:17 起至 12:08:47 的完整实盘日志。【好消息 累积机制完整跑通】11:53:17 第1轮 2100只(40.2%) → 12:
+L74     版本号: V2.6.110             修改时间: 2026-10-20 11:57 (V2.6.110记录: 用户贴 11:43:56 的 V2.6.109 首次启动日志。【先说结论】V2.6.109 两处修复都生效了 —— ① 全程无"发现更新的一代", 世代自噬
+L75     版本号: V2.6.109             修改时间: 2026-10-20 11:52 (V2.6.109记录: 用户贴 11:39:53 的 V2.6.108 首次启动日志。【先说好消息】世代自噬(V2.6.108 修的那个)已彻底消失: 全程无"发现更新的一代", 
+L76     版本号: V2.6.108             修改时间: 2026-10-20 11:40 (V2.6.108记录: 用户贴 11:31:18 的 V2.6.107 首次启动日志, 暴露三处"启动即半瘫"的缺陷 —— 前两处是新病, 第三处是 V2.6.107 的配套漏网。
+L78     版本号: V2.6.106             修改时间: 2026-10-20 11:10 (V2.6.106记录: 用户选方案9"允许情绪取数跨多轮累积", 处理"覆盖率门槛悖论"的根治版 —— V2.6.103/104/105 三版都在调门槛与预算, 但都没解决根因: 
+L12273  _SENT_ACC = {'date': '', 'gen': 0.0, 'md': {}, 'ok': 0, 'fail': 0,
+L12311  _day = str(_SENT_ACC.get('date') or '')
+L12312  _gen = float(_SENT_ACC.get('gen') or 0.0)
+L12315  _md = _SENT_ACC.get('md') or {}
+L12325  _cache = _SENT_ACC.get('ser')
+L12393  'ok': int(_SENT_ACC.get('ok') or 0),
+L12394  'fail': int(_SENT_ACC.get('fail') or 0),
+L12395  'rounds': int(_SENT_ACC.get('rounds') or 0),
+L12396  'pend_rounds': int(_SENT_ACC.get('pend_rounds') or 0),
+L12522  _SENT_ACC.update({'date': _day, 'gen': (_gen_now if _gen_now > 0.0 else _gen), 'md': _box,
+L13164  _SENT_ACC['pend_rounds'] = int(_SENT_ACC.get('pend_rounds') or 0) + 1
+L13170  _pool_n = len(_SENT_ACC.get('md') or {})
+L13556  _acc_pool_gen = float(_SENT_ACC.get('gen') if _SENT_ACC.get('gen') is not None else -1.0)
+L13557  _acc_n_have = len(_SENT_ACC.get('md') or {})
+L13566  _SENT_ACC['gen'] = _acc_gen_now
+L13567  _SENT_ACC['date'] = _acc_day_now
+L13572  elif _SENT_ACC.get('date') != _acc_day_now:
+L13575  % (_SENT_ACC.get('date') or '空', _acc_day_now, _acc_n_have))
+L13576  _SENT_ACC['date'] = _acc_day_now
+L13578  _SENT_ACC.update({'date': _acc_day_now, 'gen': _acc_gen_now,
+L13589  if not _SENT_ACC.get('md'):
+L13595  _acc_md = _SENT_ACC['md']
+L13720  _cov['rounds'] = int(_SENT_ACC.get('rounds') or 0) + 1
+L13721  _SENT_ACC['rounds'] = _cov['rounds']
+L13930  _SENT_ACC['ser'] = _ser_cache        # V2.6.117: 解析完即挂上, 供落盘复用
+L14078  _acc_now_n = len(_SENT_ACC.get('md') or {})
+L14426  _SENT_ACC.update({'date': '', 'gen': -1.0,

@@ -1,0 +1,48 @@
+==============================================================================
+PASS P3 部分成交时手工份额保留1000（原会被算成0）
+PASS P3 部分成交时手工成本不丢
+PASS P3b 份额未变时保留原成本（不被券商混合均价稀释）
+PASS P3b 首次识别按券商均价建成本 34830
+PASS P3 成交完毕后手工份额=6000-5000=1000
+PASS P3 无在途单时手工份额正常更新为500
+PASS P3 纯手工仓 manual=1000
+PASS P3 纯手工仓策略账本仍为0
+PASS P4 策略仓按策略成本判：扣费后净赚
+PASS P4 指定策略成本30 -> 放行
+PASS P4 判定用策略成本 120000
+PASS P4 原整户口径(均价32) -> 拒卖（证明差异存在）
+PASS P4 手工仓按手工成本30判：扣费后净赚
+PASS P4 代卖手工仓按手工成本放行
+PASS P4 手工仓判定成本 30000
+PASS P4 exact_avg 默认 False 时仍取三本账 max（向后兼容）
+PASS P1 手工仓1000时策略市值只算4000股
+PASS P1 旧口径会虚增手工仓市值36000
+PASS P1 源码：mv 用 _mv_strat_p94 而非 actual_vol
+PASS P1 源码：旧的 actual_vol 直接计市值已不存在
+PASS P2 源码：elif 用 position_shares > 0
+PASS P2 源码：elif 不再用 actual_vol > 0 作为加仓入口
+PASS P2 纯手工仓 position_shares=0 -> 加仓分支不成立
+PASS P2 策略有仓 position_shares>0 -> 加仓分支成立
+PASS P5 新口径已用额度 = max(10万, 4000*36=14.4万)
+PASS P5 旧口径虚高到 5000*36=18万
+PASS P5 手工仓市值不再挤占策略额度
+PASS P5 源码：_used 用 _pv_strat94
+PASS P6 自己是锁主 -> 保持可下单
+PASS P6 锁已易主 -> 自动降级为只观察
+PASS P9 锁属他人时 stop 不删除他人锁
+PASS P9 锁属自己时正常删除
+PASS P7 源码：新增 _SENT_EWMA_DAY 日期表
+PASS P7 源码：按日期去重更新
+PASS P7 旧行为一天后 EWMA≈当日分0.85（平滑失效）
+PASS P7 新行为首次平滑 = 0.18*0.85+0.82*0.30 = 0.399
+PASS P7 新行为当天后续不再变化（保持0.399）
+PASS P7 平滑真正滞后（EWMA 0.399 != 当日分 0.85）
+PASS P8 源码：cash 注释已标注参与买入定量取值
+PASS P8 源码：旧的「不参与风控计算」已移除
+PASS 铁律：硬止损参数仍为 None
+PASS 铁律：R1 异常仍 fail-closed 拒卖
+PASS 铁律：净到手<=成本仍拒卖
+PASS 铁律：sell_all 未传 state 仍直接拒卖
+PASS 铁律：移交人工释放额度逻辑在原位
+==============================================================================
+AUD94 结果：45 PASS / 0 FAIL

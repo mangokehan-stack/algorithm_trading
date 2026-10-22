@@ -1,0 +1,617 @@
+=== HEADER END LINE ===
+249
+
+=== CLASSES ===
+   807  class _G(object):
+  6489  class _BagExcl(object):
+
+=== FUNCTIONS (323) ===
+   273  def _slippage_for(price):
+   761  def _prod_of(code=''):
+   786  def fee_profile(code=''):
+   815  def _api(fn, *a, **kw):
+   920  def _flush_log(force=False):
+   963  def log(*a):
+   981  def _fmt_param(v):
+   997  def trigger_log(trigger, action, detail, **params):
+  1019  def _account_suffix():
+  1036  def _split_name(raw):
+  1042  def _join_base(name):
+  1053  def state_path():
+  1059  def run_log_path():
+  1071  def file_base_dir():
+  1087  def startup_selftest():
+  1141  def names_cache_path():
+  1146  def _flush_names_cache(force=False):
+  1170  def _load_names_cache(st):
+  1196  def _merge_external_daily_buys():
+  1252  def _disk_adjust_daily_buy(delta, code=''):
+  1283  def save_state(critical=False):
+  1367  def _state_load_candidates():
+  1401  def load_state():
+  1509  def _blocked_ip(ip):
+  1519  def notify(text):
+  1566  def notify_enqueue(text):
+  1588  def notify_drain(max_items=3, max_seconds=5.0):
+  1606  def elapsed_trading_minutes(now):
+  1623  def _proj_vol_ratio(elap_min):
+  1652  def _df_to_rows(df):
+  1672  def _bars_to_dict(df):
+  1718  def _f(x):
+  1727  def _bar_dt_min(k):
+  1767  def _bar_dt_date(k):
+  1790  def _is_today_bar(k, today):
+  1799  def _bardate_loose(k):
+  1834  def _normalize_ts(k):
+  1862  def _is_bar_fresh(k, now=None, tolerance_sec=None):
+  1896  def _subscribe_quotes(watch):
+  1978  def _refresh_ticks(watch):
+  2262  def _round2(x):
+  2266  def flush_st_coef_note():
+  2304  def _zt_coef(code, trade_date='', name_at_date=None):
+  2340  def inst_name(stock):
+  2377  def is_st_name(name):
+  2391  def name_known(stock):
+  2404  def excluded(stock):
+  2423  def can_trade():
+  2430  def probe_account():
+  2442  def _band_pct(code):
+  2462  def day_limit_prices(code):
+  2475  def clamp_order_price(px, tick, is_buy, code=''):
+  2511  def held_trd_days(buy_date):
+  2525  def fmt_pnl(pnl, pct):
+  2534  def ledger_path():
+  2539  def _transfer_rate_for(code):
+  2556  def _order_fee_delta(order_id, amount, calc):
+  2591  def fee_buy(amount, code='', order_id='', n_order=1):
+  2608  def fee_sell(amount, code='', order_id='', n_order=1):
+  2625  def pos_vol(h):
+  2633  def pos_cost(h):
+  2643  def min_profit_pct(h, code=''):
+  2660  def net_pnl_if_sell(h, lp, code=''):
+  2676  def is_at_loss(h, lp):
+  2702  def loss_cost_basis(h):
+  2711  def pnl_stat():
+  2731  def pnl_meta():
+  2746  def pnl_base_asset(cur_asset=0.0):
+  2760  def pnl_mode_note():
+  2765  def pnl_pct_of(pnl, base):
+  2769  def fmt_money(v):
+  2773  def pnl_level(pct, step_ratio):
+  2779  def _safe_rollback_placeholder(s):
+  2799  def _keep_partial_hold(s):
+  2824  def is_own_position(h):
+  2833  def mode_pos_count(extra=0):
+  2840  def pnl_alert(text):
+  2853  def loss_data_source_alert(ok, probe_n=0, detail=''):
+  2873  def used_capital():
+  2906  def abs_cap_left(price):
+  2927  def data_gate():
+  2977  def data_quality_alert(note):
+  3007  def _fp_keys():
+  3018  def _fp_calc(keys):
+  3027  def param_fingerprint():
+  3048  def code_fingerprint():
+  3059  def ledger_append(rec):
+  3098  def ledger_buy(s, h, price, vol, reason, npos_before, was_new=True, pos_before=0, fee=None):
+  3121  def ledger_sell(s, h, price, vol, reason, npos_before, order_id=''):
+  3161  def _deal_diag_log(msg):
+  3173  def _deal_field_sample(d):
+  3189  def _find_manual_sell_deal(code):
+  3241  def estimate_close(s, h, note=''):
+  3338  def alert_open(rec, cash_before=0.0, cash_after=0.0):
+  3357  def alert_close(rec, cash_before=0.0, cash_after=0.0):
+  3378  def alert_unreal(s, h, lp, mv, unreal, pct, days, kind, level, step):
+  3396  def alert_portfolio(snap, sig, level):
+  3423  def _ledger_today_counts():
+  3444  def _ledger_today_pnl():
+  3462  def alert_daily_report(snap):
+  3498  def pnl_halfhour_report(snap):
+  3569  def pnl_brief():
+  3583  def strategy_status_signature(phase=None):
+  3614  def strategy_pnl_value():
+  3623  def status_log_if_changed(phase=None, force=False):
+  3653  def pnl_startup_note():
+  3685  def pnl_tick():
+  3722  def _pnl_tick_unlocked(ticks=None):
+  3911  def size_equity():
+  3939  def atr_of(s):
+  3981  def last_close_of(s):
+  3993  def sell_stall_confirmed(s, h, lp, t):
+  4038  def calc_stop_pct(atr_pct):
+  4043  def calc_size(s, price, atr, atr_pct, eq, cash):
+  4154  def lock_state():
+  4167  def trd_days_after(ymd, n):
+  4174  def pause_until(ymd, n):
+  4189  def in_pause(until):
+  4199  def market_tide_check():
+  4280  def pos_limit():
+  4283  def _parse_emergency_text(raw):
+  4306  def emergency_mode_effective():
+  4345  def emergency_block(side):
+  4367  def can_open_new():
+  4433  def settle_pending(pos_total):
+  4459  def settle_after_close(s, pnl, round_fee):
+  4510  def handoff_records():
+  4518  def is_handoff(h):
+  4522  def handoff_credit():
+  4536  def eff_cash(cash):
+  4547  def exit_price_needed(h, code=''):
+  4578  def trap_metrics(s, h, lp):
+  4589  def trap_gap_ok(last_date, n):
+  4607  def manual_alert_path():
+  4612  def write_manual_todo():
+  4649  def fire_trap_alert(s, h, lp, kind, reason):
+  4689  def blacklist_add(s, reason):
+  4726  def blacklist_remove_tagged(s):
+  4755  def handoff_position(s, h, lp, reason):
+  4788  def monitor_handoff(s, h, lp):
+  4811  def check_trap(s, h, lp):
+  4841  def clear_handoff(s, note=''):
+  4861  def trap_sweep():
+  4887  def mark_sold(s):
+  4892  def rebuy_blocked(s, t0=''):
+  4914  def _mode_buckets():
+  4927  def daily_buy_cap(mode=None):
+  4936  def daily_sell_cap(mode=None):
+  4942  def daily_buy_state(mode=None):
+  4961  def daily_sell_state(mode=None):
+  4979  def daily_buy_blocked(mode=None):
+  4994  def daily_buy_left(mode=None):
+  5005  def daily_sell_left(mode=None):
+  5014  def daily_buy_done(s, mode=None):
+  5023  def daily_sell_done(s, mode=None):
+  5032  def daily_add_state(mode=None):
+  5053  def daily_add_done(s, mode=None):
+  5062  def query_order_status(s, ords_snap=None):
+  5080  def note_order_id(code, rm, oid):
+  5116  def _oid_rec(s, side):
+  5132  def _oid_side_of(s, oid):
+  5150  def _oid_known(s, oid):
+  5155  def _oid_sort_key(oid):
+  5163  def _code_with_suffix(code):
+  5171  def disp_code(s, name=''):
+  5188  def disp(s):
+  5192  def buy_scope_ok(s):
+  5199  def sell_scope_ok(s):
+  5203  def is_strategy_target(code):
+  5232  def scope_refuse(s, side):
+  5249  def _clock_session_note():
+  5258  def _today_has_bars(ymd):
+  5290  def load_local_calendar():
+  5352  def log_day_phase_banner(force=False):
+  5393  def refresh_calendar():
+  5582  def is_trading_day(ymd=''):
+  5591  def market_phase(ymd='', hm=None):
+  5607  def load_universe():
+  5626  def step_day_init():
+  5811  def detect_volume_unit(d1, sample_cap=300):
+  5888  def detect_tick_volume_unit(stocks, sample_cap=200):
+  5925  def _tick_unit_blocked():
+  5935  def _tick_to_daily_scale():
+  5943  def load_history():
+  6108  def blacklist_path():
+  6113  def load_blacklist():
+  6161  def st_hist_path():
+  6166  def load_st_hist():
+  6220  def _risk_ex_sig_of(path):
+  6230  def _risk_ex_cur_sig():
+  6239  def risk_exclude_path():
+  6244  def _risk_exclude_candidates():
+  6250  def _risk_src_err_short(e):
+  6270  def load_risk_exclude():
+  6510  def _http_risk(url, timeout=None, retries=2, enc='utf-8'):
+  6532  def _suffix_risk(code):
+  6547  def _norm_risk(secucode, seccode):
+  6554  def _iso_risk(d):
+  6558  def _fetch_st_risk(bag):
+  6587  def _fetch_st_local_risk(bag, account=''):
+  6612  def _fetch_lift_risk(bag, days):
+  6647  def _fetch_decrease_risk(bag, days):
+  6676  def _fetch_loss_risk(bag, days):
+  6704  def _fetch_ann_risk(bag, days, max_pages):
+  6751  def _auto_risk_exclude():
+  6830  def risk_excluded(s):
+  6853  def get_recent_net_profit(s):
+  6978  def _float_market_cap_yi(stock):
+  7048  def _last_close_of(stock):
+  7059  def _float_share(stock):
+  7103  def get_recent_net_profit_cached(s):
+  7118  def _ts_to_date(t):
+  7138  def _fin_short(k):
+  7144  def _extract_fin_rows(cfd, code, table):
+  7223  def _pick_latest_fin_row(rows, _report_date, _announce_date, today):
+  7255  def _download_qmt_financial_data(stocks):
+  7290  def _probe_financial_data(stocks):
+  7293  def ensure_financial_data(stocks):
+  7313  def _mark_loss_degraded():
+  7329  def _mark_mcap_degraded(n_degrade=0, n_checked=0):
+  7350  def _fin_unknown_rd():
+  7369  def risk_blocked(s, comp):
+  7460  def ma10_held_after_zt(comp, p):
+  7489  def zt_low_held(comp, p):
+  7504  def ma5_of_comp(comp):
+  7513  def detect_confirm_entry(comp, p):
+  7537  def detect_ma5_break(comp, p, base_vol):
+  7560  def _norm_code(s):
+  7564  def _fetch_sector_members():
+  7600  def _autofix_sector_data():
+  7608  def load_hot_sectors():
+  7696  def stock_in_hot_sector(s):
+  7714  def financial_data_recheck():
+  7747  def screen_candidates():
+  8174  def rescreen_if_needed():
+  8233  def dry_cash_delta(d):
+  8240  def _own_hold_count():
+  8248  def query_account():
+  8324  def _estimate_base_vol(code):
+  8339  def reconcile_positions():
+  8769  def day_pos(tick, lp):
+  8782  def in_high_zone(pos):
+  8789  def pyramid_alloc(plan_vol):
+  8817  def pyramid_remain(h):
+  8828  def _set_buy_ctx(code, ctx):
+  8855  def pyramid_add(s, h, lp, vol, batch_idx, batch_total, reason, tick=None):
+  8964  def risk_increase_allowed():
+  9002  def run_pyramid_adds(ticks, cash, ords_snap=None):
+  9333  def _norm_reason(r):
+  9348  def hourly_reason_note(side, code, name, reason):
+  9379  def _hourly_fmt(d):
+  9398  def hourly_reason_dump(force=False):
+  9436  def buy_stock(c, lp, est, ratio, cash, want_vol=None, atr=0.0, atr_pct=0.0, stop_pct=0.0, plan=None, tick=None, ords_snap=None):
+  9670  def sell_stock(s, h, pos_avail, lp, reason, tick=None):
+  9709  def place_sell_order(s, h, vol, lp, reason, tick=None, ords_snap=None):
+  9925  def _own_order(o, s, side):
+  9942  def _find_order_obj(s, side, ords_snap=None):
+  9982  def sell_order_obj(s, ords_snap=None):
+  9994  def cancel_sell_order(o):
+ 10014  def handle_unfilled_sell(s, h, pos_avail, lp, tick=None, ords_snap=None):
+ 10140  def buy_order_obj(s, ords_snap=None):
+ 10149  def cancel_buy_order(s, o):
+ 10170  def handle_unfilled_buy(s, h, ords_snap=None):
+ 10381  def run_round():
+ 10510  def _run_round_unlocked(ticks, pos_total, pos_avail, cash, elap, k, ords_snap=None):
+ 11161  def order_callback(ContextInfo, orderInfo):
+ 11210  def _sim_fill_prob_dynamic(s, price, volume):
+ 11238  def _sim_deal(remark, price, volume):
+ 11335  def _deal_key(dealInfo, code, side, price, volume):
+ 11355  def deal_callback(ContextInfo, dealInfo):
+ 11606  def orderError_callback(ContextInfo, orderArgs, errMsg):
+ 11697  def print_summary():
+ 11720  def init(ContextInfo):
+ 11917  def heartbeat_path():
+ 11948  def gen_path():
+ 11955  def gen_announce():
+ 11979  def _gen_superseded():
+ 12019  def heartbeat_tick(force=False):
+ 12145  def log_guard(ContextInfo=None):
+ 12169  def after_init(ContextInfo):
+ 12181  def handlebar(ContextInfo):
+ 12196  def timer_poll(ContextInfo):
+ 12227  def _timer_poll_unlocked(ContextInfo):
+ 12506  def _sent_acc_path():
+ 12514  def _sent_acc_dump():
+ 12642  def _sent_acc_load():
+ 12756  def _exc_text(e):
+ 12776  def _sent_wlog(msg):
+ 12788  def _sent_regime_cn(r):
+ 12793  def _sent_human_readable(sig):
+ 12835  def _sent_fetch_from_cache():
+ 12929  def _sent_today():
+ 12941  def _sent_f(v, dflt=None):
+ 12954  def _sent_quantile(vals, q):
+ 12971  def _sent_roll(vals, idx, win, minp):
+ 12987  def _sent_ewma(vals, span):
+ 13006  def _sent_col_series(rows, key):
+ 13011  def _sent_z_last(vals, win):
+ 13028  def _sent_tanh(x):
+ 13046  def sent_fingerprint():
+ 13065  def sent_fetch_all_data():
+ 13143  def _sent_override_note(ovs):
+ 13171  def _sent_cache_path():
+ 13177  def _sent_cache_load():
+ 13200  def _sent_cache_save(sig):
+ 13226  def _sent_use_last_good(why):
+ 13311  def _sent_fetch_md_batch(C, codes, fields, start, cnt, box, depth, acc=None):
+ 13353  def _sent_apply_rows(rows):
+ 13472  def _sent_degrade_alert(why):
+ 13492  def _sent_fetch_worker(_lock):
+ 13512  def _sent_fetch_sync():
+ 14500  def _winsorize_list(vals):
+ 14510  def _sent_comp_note(sig):
+ 14531  def _sent_compute(rows):
+ 14613  def _sent_fresh_enough(last_date, today):
+ 14635  def sent_bootstrap():
+ 14716  def sent_daily_refresh():
+ 14783  def _sent_reset_ready(why):
+ 14794  def sent_gate_skip():
+ 14809  def sent_block_note():
+ 14824  def sent_size_mult():
+ 14834  def sent_param_overrides():
+ 14844  def sent_param(name, default):
+
+=== UPPER_CONSTS (284) ===
+   254  ACCOUNT_ID = ''                 # 留空=自动使用策略交易界面配置的资金账号(推荐); 编辑器调试时可手填
+   258  TRADE_MODE = 'live'
+   263  DRY_RUN = False
+   267  SLIPPAGE_PCT = 0.002
+   292  STRATEGY_CASH_CAP = 200000.0        # V2.6.74: 用户确认总预算提高到20万元(原66666.66)
+   295  LOG_TO_FILE = True
+   297  LOG_FLUSH_INTERVAL = 0.2        # 缓冲距上次落盘超过该秒数即写盘
+   298  LOG_FLUSH_MAX = 200             # 缓冲条数达到该值立即写盘
+   299  EMERGENCY_MODE = 'normal'       # normal=正常; stop_new=停【新开仓】; halt=停【一切买入】(新开仓+分批加仓); only_cancel=停【一切新委托】(仅允许
+   303  EMERGENCY_FILE = 'zt_shrink_emergency.json'   # 应急开关文件(纯文件名, 脚本同目录): 文件存在且内容含 stop_new/halt/only_cancel/normal
+   304  EMERGENCY_FILE_REFRESH_SEC = 1.0              # 应急开关文件最短重读间隔(秒), 避免每轮读盘
+   308  SELL_CTX_SETTLE_GRACE_SEC = 2 * 86400   # 2个自然日: 当日委托次日报回正常; 超期视为回报丢失
+   311  CSV_ENCODING = 'gbk'
+   314  TARGET_BUY_AMOUNT = 20000.0    # 单票目标买入金额(元), 仅FIXED_BUY_VOL=0时生效
+   315  FIXED_BUY_VOL = 100            # 仓位: 每次固定买入股数, 100=每次一手; 设0改回按金额买
+   316  MAX_DAILY_PICKS = 2            # 每日候选多于N只时, 按缩量充分度优选前N只(优选名单, 默认2只)
+   317  DAILY_BUY_PICKS = 1            # 每日可买标的数: 每天只买优选名单里排名最靠前的N只(默认1=两只优选里只买最好的那一只; 0=不限)
+   318  MAX_DAILY_BUYS_LIVE = 3        # 实盘每日买入笔数上限(按交易日累计, 0=不限制) | 20261004用户确认: 3笔/日
+   319  MAX_DAILY_BUYS_PAPER = 3       # 纸面(回测/模拟)每日买入笔数上限(0=不限制) | 20261004用户确认: 3笔/日(与实盘同口径)
+   320  BUY_BLOCK_TAG = '手工封锁'      # P1修复: set_daily_buys.py MODE='BLOCK' 写入状态文件 buys 的封锁标记;
+   321  EXT_MERGE_INTERVAL_SEC = 300    # P2-2修复(2026-10-17): 轮询主动合并外部BLOCK的间隔秒数 ——
+   327  MAX_DAILY_SELLS_LIVE = 0       # 实盘每日卖出笔数上限(0=不限制)
+   328  MAX_DAILY_SELLS_PAPER = 0      # 纸面(回测/模拟)每日卖出笔数上限(0=不限制)
+   331  MAX_POSITIONS = 3              # 同时持仓总上限(任意时刻【本策略自身持仓】不得超过3只; 仅SINGLE_POSITION_MODE=False时生效; 单仓模式强制1只)
+   333  MIN_BUY_AMOUNT = 3000.0        # 单票最低买入金额(元): 一手金额低于该值直接跳过(低价股最低佣金5元占比过高); 0=不限制
+   334  DYN_PROFIT_FEE = True          # 卖出盈利门槛按该笔实际双边费用动态计算(取max(SELL_MIN_PROFIT_PCT, 双边费用率)), 保证净到手为正
+   335  MIN_DAILY_AMOUNT = 10000000.0  # 基准量日最低成交额(元)，默认1000万；过滤极低流动性标的
+   341  DAILY_VOL_UNIT = 100
+   342  AUTO_VOL_UNIT = True
+   343  TICK_VOL_UNIT = 0              # tick快照volume单位: 0=按已确认口径(手, 与日线同单位); 100=强制手; 1=强制股(仅调试用, 量能预估会偏差100倍)
+   347  TICK_UNIT_BLOCK_DAYS = 3       # 连续异常交易日数, 达到即拉闸暂停买入(默认3个交易日)
+   348  TICK_UNIT_ACK = False          # 人工确认开关: True=视为已人工确认行情源正常(解除拉闸)
+   352  BUY_ORDER_TIMEOUT_SEC = 600    # (实盘)买入委托发出N秒未成交先撤单, 再按最新价重报; 0=关闭(维持旧行为只提示)
+   353  BUY_ORDER_ERR_MAX = 5          # P2-6修复(2026-10-17): 买入委托状态连续N次查询失败即重置超时计时
+   356  PYRAMID_MIN_DAY_MINUTES = 5   # V2.6.44b: 开盘至少运行N分钟后才用当日高低区间判断分批加仓位置
+   357  PYRAMID_MIN_DAY_BARS = 3      # V2.6.44b: 当日1m样本至少N根后才判断分批加仓位置
+   358  ORDER_CB_DEDUP_SEC = 2.0      # V2.6.44b: 同一委托状态回报短窗去重(柜台可能重复推送)
+   359  BUY_ORDER_RETRIES = 2          # (实盘)撤单后按最新价重报的最大次数, 用尽则放弃并退回当日买入额度
+   361  SELL_ORDER_TIMEOUT_SEC = 300   # (实盘)卖出委托发出N秒仍有可用持仓视为在途等待; 超时才查柜台复核, 防止30秒重复发单
+   362  SELL_ORDER_ERR_MAX = 5          # P2-6修复(2026-10-17): 卖出委托状态连续N次查询失败即重置超时计时(同买入侧口径)
+   363  SELL_ORDER_RETRIES = 3         # (实盘)卖出委托超时重发的最大次数, 用尽则停止自动卖出并每日提示人工处理
+   364  CANCEL_CONFIRM_GRACE_SEC = 10  # 审计修复G5: 撤单确认宽限秒数 —— 撤单指令发出后此时间内委托消失不重报, 防撤单回报晚到导致重复买入
+   365  PRICE_CAGE_PCT = 0.02          # 委托价格笼子: 限价与最新价偏差不超过±2%(深市笼子), 超出会被柜台拒单
+   366  LIMIT_BAND_PCT = 0.098         # 涨跌停保护带: 有昨收时委托价夹到昨收±9.8%以内(20cm品种夹更窄同样合法), 防一字板废单
+   370  LIMIT_BAND_BSE = 0.295          # 北交所(43/83/87/88/92): 官方30%涨停, 内侧保护
+   371  LIMIT_BAND_KEB = 0.195          # 创业板/科创板(300/301/688/689): 官方20%涨停, 内侧保护
+   372  LIMIT_BAND_ST = 0.049           # 主板ST: 官方5%涨停, 内侧保护(仅当持仓期内被ST化时生效)
+   373  PORTFOLIO_FUSE_LOSS = 0.05     # 组合熔断: 【真实权益】跌破-该比例暂停新开仓(只卖不买); 0=关闭
+   376  FUSE_PAUSE_TRDAYS = 2          # 熔断暂停的交易日数: 暂停该数个交易日后自动恢复开仓(与盈利全平/人工解除并存)
+   377  FUSE_AUTO_RESUME_DAYS = 5      # 兜底: 日历取不到未来交易日时按该自然日数计算熔断截止(0=取不到则维持粘性)
+   382  PORTFOLIO_HARD_DD_PCT = 0.15   # 真实权益(含移交仓浮亏)回撤达该比例 -> 硬熔断(暂停开新仓+分批加仓, 不自动解除); 0=关闭
+   383  STATE_BAK_KEEP = 3             # 状态文件每日滚动备份份数(每交易日首次写入前自动备份, 0=关闭)
+   384  REBUY_GAP_TRDAYS = 10          # 去重: 卖出后再次入选需间隔超过N个交易日(严格大于)
+   385  LOOKBACK_TRDAYS = 7            # 规则1: 近N个交易日观察窗口
+   386  ONLY_SINGLE_ZT = True          # 规则1: True=近N日恰好1个涨停(多个涨停剔除); False=至少1个
+   387  ZT_VOL_RATIO_MIN = 1.2         # 规则1: T0涨停日量能须>=此前5日均量的该倍数(放量涨停); 设0关闭
+   388  BASE_VOL_RATIO_MIN = 0.5       # 审计修复1: T0+1基准量日量能须>=T0量的该倍数(防基准量日极端缩量导致买卖阈值失真); 设0关闭
+   389  BUY_WINDOW_START = 3           # 规则2: 涨停后第N个交易日(含)开始进入低吸窗口
+   390  BUY_WINDOW_END = 7             # 规则2: 涨停后第M个交易日(含)窗口结束, 过期放弃
+   391  SHRINK_BUY_RATIO = 0.36        # 规则2(20261005拍板3确认有意调严): 预估全日量 <= 基准量*0.36 视为缩量到位(实际阈值=0.36*1.10≈0.40, 比出厂0.55
+   395  BUY_TOL = 1.10                 # "缩量附近"容差: 实际阈值=0.36*1.1≈0.40(20261005拍板3确认调严)
+   396  EXPAND_SELL_RATIO = 2.00       # 规则3: 预估全日量 >= 基准量*2.0 视为放量离场
+   401  SELL_TOL = 0.95                # "两倍左右"容差: 实际阈值=2.0*0.95=1.9
+   402  ZT_TURNOVER_MIN = 0.05         # 涨停日换手率下限(小数, 5%); 低于此值视为一字板/流动性不足剔除; 0=关闭
+   403  ZT_TURNOVER_MAX = 0.20         # 涨停日换手率上限(小数, 20%); 高于此值视为过热/出货剔除; 0=关闭
+   404  SELL_TURNOVER_TOP = 0.30       # 卖出信号: 当日预估换手率超过此值(30%)且盈利时卖出; 0=关闭
+   405  MARKET_TIDE_CHECK = True       # 退潮期检查: 基准指数近N日跌幅达阈值时暂停新开仓
+   406  MARKET_TIDE_INDEX = '000001.SH' # 退潮判断基准指数(上证指数)
+   407  MARKET_TIDE_LOOKBACK = 3       # 退潮回看交易日数
+   408  MARKET_TIDE_DROP_PCT = 0.03    # 退潮跌幅阈值(小数, 3%)
+   409  EARLY_SELL_VOL_MULT = 1.5      # 早盘30-60分钟卖出放量阈值乘数(防早盘放量误触发); <30分钟禁卖
+   410  EARLY_SELL_BLOCK_MIN = 30      # P1-5修复(20261008): 早盘开盘N分钟内禁卖(原硬编码30, 参数化)
+   411  EARLY_SELL_END_MIN = 60        # P1-5修复(20261008): 早盘开盘N分钟后恢复正常放量阈值(原硬编码60, 参数化)
+   412  SELL_GIVEUP_RETRY_SEC = 1800   # 卖出giveup后自动重试超时(秒); 0=不自动重试
+   413  MARKET_TIDE_ERR_BLOCK_N = 2    # 重审20261005: 指数行情连续N次取数异常才保守禁买(第1次异常降级放行+强提醒)
+   414  MARKET_TIDE_RETRY_SEC = 1800   # P1-3修复(2026-10-17): 退潮禁买后的自动重试窗口秒数(旧版只有引用无定义,
+   422  STALL_CONFIRM_ON = True        # True=放量【且】滞涨才止盈; False=回到纯量能口径(原行为)
+   423  STALL_MAX_GAIN_PCT = 0.01      # 滞涨条件①: 现价较昨收涨幅 <= 该比例(放量却涨不动)
+   424  STALL_NEWHIGH_DAYS = 5         # 滞涨条件②: 现价未超过近N个【已完成】交易日的最高价(没创新高)
+   425  STALL_NEWHIGH_GAP = 0.0        #   条件②容差: 现价 < 近高x(1-该值) 才算"未创新高"(0=严格不创新高)
+   426  SELL_MIN_PROFIT_PCT = 0.001    # 止盈门槛下限: 现价>成本x(1+0.1%)才允许卖; DYN_PROFIT_FEE=True时按实际费用自动抬高
+   427  NEVER_STOP_LOSS = True         # 绝不止损(用户定稿): True=任何情况下都不因亏损卖出 —— 每笔专属硬止损、
+   431  MAX_HOLD_TRDAYS = 33            # 2026-10-09第五轮审计(用户确认): 33个交易日"盈利到期"出口 —— 持有满33个交易日且扣费净利>0才卖, 亏损继续持有
+   432  BUY_MIN_ELAPSED_MIN = 30       # 开盘满N分钟后才允许买(早盘预估量失真)
+   433  SELL_MIN_ELAPSED_MIN = 5       # 开盘满N分钟后即允许卖(T+1挂起执行通道; 常规放量卖出仍受 EARLY_SELL_BLOCK_MIN=30 禁卖约束, 见卖出判定)
+   434  MAX_PULLBACK_FROM_ZT = 0.15    # 现价低于涨停日收盘10%以上不接(防崩盘, 设1关闭)
+   435  MAX_CHASE_OVER_ZT = 0.03       # 现价高于涨停日收盘3%以上不追(只低吸, 设1关闭)
+   436  EXCLUDE_ST = True              # 剔除ST/*ST(名称含ST)
+   437  EXCLUDE_ST_HIST = True         # 剔除历史曾用名含ST/曾被ST的股票(读本地清单ST_HIST_FILE, 用户定稿2026-10-08)
+   438  EXCLUDE_KCB = False            # 2026-10-14用户确认开启: 放开科创板688/689进入选股池
+   439  EXCLUDE_CYB = True             # 是否剔除创业板300/301
+   442  VERSION = 'V2.6.159'    # 当前版本号(与启动日志和横幅展示一致; 改版需同步文件头版本注释)
+   443  CHECK_INTERVAL = 30            # 盘中轮询间隔(秒, run_time策略状态)
+   444  HEARTBEAT_LOG_SEC = 600       # 状态检查最短间隔(秒), 不是强制定时输出; 状态签名未变化时不刷新日志; 设0关闭状态快照
+   445  HOURLY_REASON_LOG_SEC = 3600   # 2026-10-12新增: 每小时汇总日志间隔(秒): 打印本小时优选股未买入/持仓股未卖出的原因统计
+   449  HB_PNL_TRIGGER_PCT = 0.01     # 心跳额外触发阈值(2026-10-02 用户设定=1%): 浮动盈亏/总资产变动达基准权益该比例
+   452  CAL_RETRY_SEC = 60            # 日历未含当日(工作日)时的自动复核间隔(秒); 日历滞后时确认开市后自动恢复交易
+   454  SESSION1_START = 930           # 上午开市 09:30
+   455  SESSION1_END = 1130            # 上午收市 11:30(11:30起午休)
+   456  TICK_STALE_MAX_SEC = 180         # V2.6.31新增: 1m K线数据新鲜度硬阈值(秒) —— 最后bar时间与当前差超过此值判数据冻结
+   457  VOL_COMPLETE_MIN_RATIO = 0.70    # V2.6.33新增(置0=关闭本闸门): 当日1m bar根数 >= 已开盘分钟数x该比例, 才认当日累计量可信 ——
+   461  VOL_IMPLAUSIBLE_MIN_RATIO = 0.05 # V2.6.33新增(置0=关闭本闸门): 预估全日量/基准量 低于该值判"数据不完整"而非"极度缩量"
+   462  BACKFILL_1M_ENABLE = True      # V2.6.34新增: 断档后自动补当日1m历史数据的总开关(False=维持V2.6.33行为)
+   463  BACKFILL_1M_MIN_INTERVAL = 120.0  # V2.6.34新增: 同一标的两次补1m数据的最小间隔(秒), 防高频请求
+   464  BACKFILL_1M_MIN_BARS = 8       # V2.6.34新增: 当日1m bar 少于此值才触发补数据(刚开盘不狂补)
+   465  BACKFILL_1M_TRIGGER_RATIO = 0.90  # V2.6.34b新增: 当日bar根数 < 已开盘分钟数x该比例 即触发补1m
+   468  SESSION2_START = 1300          # 下午开市 13:00
+   469  SESSION2_END = 1500            # 下午收市 15:00
+   470  PHASE_NAME = {'trading': '交易时段', 'off_hours': '非交易时段(盘前/午休/盘后)',
+   472  HISTORY_BARS = 120              # 每股加载日线索数(需覆盖7天选股窗口+MA10逐日判定: 保证窗口内每个交易日索引>=9, MA10不再漏检窗口早期交易日)
+   473  MIN_HISTORY_BARS = 8           # 日线不足N根的次新股跳过(上市初期无涨跌幅限制)
+   474  DOWNLOAD_CHUNK = 400           # 每个策略状态分批下载的股票数(避免长时间阻塞框架)
+   475  DOWNLOAD_START_DAYS = 40       # 下载历史时回看的自然日数
+   476  RESCREEN_INTERVAL = 300        # 补选股重试间隔(秒): 日初始化已完成但有效历史不足时, 按此间隔重试
+   477  MIN_UNIVERSE_FOR_SCREEN = 2000 # 有效历史股票数低于该值视为数据残缺: 触发补选股并每日告警(残缺全市场里做缩量优选排序会失真)
+   478  MIN_UNIVERSE_RATIO = 0.80      # P2修复: 有效历史数/股票池数 低于该比例同样告警(环比口径, 补固定阈值2000的不足 ——
+   486  NEW_BUY_DATA_BLOCK = False      # 2026-10-09第五轮审计(用户确认): False=数据缺失只强提醒、不再暂停开仓; 改回True即恢复硬拦
+   487  DATA_BLOCK_RATIO = 0.60        # 日线覆盖率低于该比例 = 严重缺失(收紧); [该值, MIN_UNIVERSE_RATIO) = 轻度缺失(只强提示)
+   488  STALE_BLOCK_ROUNDS = 2         # 持仓行情连续N轮完全取不到最新价 = 行情源不可用(收紧, 防按陈旧价增险)
+   489  DATA_ALERT_PUSH = True         # 数据缺失强提醒是否推送(同一交易日最多一条; 未配webhook时只落日志窗)
+   493  MARKET_CAP_FILTER_ON = True      # 2026-10-12用户确认开启: 按流通市值30~150亿过滤选股
+   494  MARKET_CAP_MIN_YI = 30.0         # 流通市值下限(亿元), 低于该值剔除(避免超小盘被操控/流动性差)
+   495  MARKET_CAP_MAX_YI = 150.0        # 流通市值上限(亿元), 高于该值剔除(超大盘反弹弹性弱)
+   496  MARKET_CAP_DEGRADE = True        # 市值数据获取失败时降级放行: True=不误剔(宁可放过); False=保守剔除
+   497  MARKET_CAP_CACHE_SEC = 300       # 市值缓存时长(秒), 降低接口调用压力; V2.6.83: 3600->300
+   504  PARAM_VERIFY_ENFORCE = False
+   505  DOWNLOAD_TIME_BUDGET_SEC = 8.0 # P1-3修复: 日线下载阶段单轮最长占用秒数(超时让出轮询线程, 下轮续下; 0=不限)
+   509  VOL_PROJ_MODE = 'linear'      # P1-4修复(2026-10-17): sqrt→linear。A股日内累计成交近似线性
+   515  VOL_PROJ_POWER = 0.5           # VOL_PROJ_MODE='power' 时的指数(0.5 等价 sqrt; 越接近1越接近线性)
+   517  POS_EMPTY_CONFIRM_ROUNDS = 3   # 柜台 POSITION 返回空表而状态文件仍有本策略持仓时, 需连续N轮确认为空才认定
+   523  STRATEGY_CAPITAL = 200000.0    # V2.6.74: 策略预算本金同步提高到20万元(用户确认, 与现金封顶同值)
+   524  DYN_SIZING_ON = True           # True=按风险预算动态算手数; False=退回固定手数(FIXED_BUY_VOL/TARGET_BUY_AMOUNT)
+   525  SIZE_EQUITY_MODE = 'current'   # 手数基准权益: current=起始本金+累计已实现+当前浮盈(复利, 盈加亏缩)
+   527  SIZE_EQUITY_INCLUDE_HANDOFF = True   # 风险权益默认计入已移交套牢仓浮亏，避免手数基准虚高。
+   531  SINGLE_POSITION_MODE = False   # 单仓串行: True=同时只持一只, 须平仓并"赚到手"后才解锁下一只
+   534  RISK_PCT = 0.05                  # V2.6.74: 风险预算系数由1.5%提高到5%(用户确认) - 仅用于按止损距离反推手数上限
+   540  DEGRADE_TOLERANCE = 2.0        # P1-2修复(2026-10-04): 降级买一手对RISK_PCT的容忍倍数。
+   543  ATR_PERIOD = 14                # ATR(真实波幅)周期
+   544  ATR_STOP_MULT = 2.0            # 止损距离 = ATR%x该倍数(2026-10-03 方案A: 唯一口径, 不再与任何固定止损取大)
+   545  ATR_STOP_MAX = 0.15            # 止损距离上限: 超过15%不买(一止损就亏太多)
+   546  ATR_PCT_MAX = 0.12             # ATR%超过12%视为高波动妖股, 剔除不买
+   547  ATR_BARS = 30                  # 计算ATR单只补拉的日线根数(只对最终候选拉, 不全市场拉)
+   548  MAX_POS_VALUE_PCT = 1.0          # V2.6.74+V2.6.79: 相对上限已放开到100%(不约束); 单票实际资金安全约束由 MAX_POS_VALUE_ABS(固定66666.6
+   549  MAX_TOTAL_VALUE_PCT = 1.0        # V2.6.74: 组合总市值上限放宽到100%(用户确认) - 真正的封顶由 STRATEGY_CASH_CAP(200000)兜底
+   550  MAX_DAILY_SWING_PCT = 0.04       # V2.6.74: 单票日内波动上限由2%提高到4%(用户确认, 让波动票也能买到单票额度)
+   551  MAX_POS_VALUE_ABS = 66666.66   # V2.6.74新增: 单票绝对金额上限(元) - 用户要求每只股票单独限额66666.66元
+   553  CASH_USE_PCT = 0.95            # 单次买入最多动用可用现金的比例(留费用与滑点)
+   554  LOT_SIZE = 100                 # A股最小交易单位(买入必须100股整数倍)
+   557  RUN_ROUND_GUARD_SEC = 5.0      # V2.6.83(P3): handlebar/timer_poll 双入口竞态跳过窗口(秒)。
+   563  SIM_FILL_PROB = 1.0
+   569  SIM_DRY_FILL_PROB = 0.95
+   575  SIM_PARTIAL_FILL_ON = False
+   576  SIM_PARTIAL_FILL_MIN = 0.30     # 部分成交比例下限(30%)
+   577  SIM_PARTIAL_FILL_MAX = 0.95     # 部分成交比例上限(95%)
+   578  STOP_SLIPPAGE_BUF = 0.002      # 提前0.2%触发止损, 防成交价落在线外(2026-10-03 方案A: 仅供"跌破止损线"提示用, 不触发卖出)
+   580  DAILY_LOSS_ALERT_PCT = 0.02    # 单票浮动亏损达基准权益该比例时只提示一次, 不动作; 0=关闭
+   581  SIZING_VALUE_ALERT_MULT = 1.2  # 上涨致市值超过上限x该倍数时只提示, 不减仓; 0=关闭
+   582  PROFIT_LOCK_FEE_MULT = 1.5     # "赚到手": 净利 >= 往返费用x该倍数
+   583  PROFIT_LOCK_MIN_PCT = 0.001    # "赚到手": 且净利 >= 基准权益x该比例(绝对下限, 防只赚出过路费)
+   584  PROFIT_LOCK_STRICT = False     # True=微利(0<净利<门槛)也按亏损处理, 不解锁
+   585  COOLDOWN_TRDAYS = 1            # 亏损平仓后冷静的交易日数(期间不开新仓)
+   586  CONSEC_LOSS_PAUSE = 3          # 连续亏损达N次触发长停
+   587  LOSS_PAUSE_TRDAYS = 3          # 长停的交易日数
+   591  PYRAMID_ON = True              # 总开关: 把单只票的计划总仓位拆成N笔, 按价格在当日区间的位置分次成交
+   592  PYRAMID_SPLITS = 3             # 批次数 N(默认3笔); <=1 时退化为一次性买入
+   593  PYRAMID_RATIOS = [0.4, 0.3, 0.3]  # 各批成交比例(长度不足自动补齐, 总和自动归一化, 首笔权重最大=金字塔)
+   594  PYRAMID_HIGH_ZONE_PCT = 0.20   # 当日振幅的"高位区"占比: 价格位置>=1-该值(即振幅前20%)时跳过本批
+   595  PYRAMID_MIN_GAP_MIN = 30       # 相邻两批的最小间隔(分钟), 防同一波里连续买; 跨交易日自动满足
+   596  PYRAMID_MAX_PER_DAY = 2        # 同一交易日最多成交批次数(0=不限); 当日买不满的批次顺延到后续交易日
+   597  PYRAMID_ADD_MAX_UP_PCT = 0.03  # 加仓价相对首笔成交价的最大上浮(超过则等回调; 0=不限)
+   598  PYRAMID_MAX_WAIT_TRDAYS = 5    # 从建仓日起最多等待N个交易日完成全部分批(自然日顺延, 到期按EXPIRE_MODE处理)
+   599  PYRAMID_EXPIRE_MODE = 'keep'   # 到期处理: keep=放弃剩余(只保留已买部分) / fill=不看价位一次性补足剩余
+   607  TRAP_ALERT_ON = True           # 总开关: False=完全关闭套牢提醒与移交
+   608  TRAP_LOSS_PCT = 0.15           # 触发阈值①: 浮动亏损比例(现价/成本均价-1)达该值, 即 -15%
+   609  TRAP_LOSS_AMT_PCT = 0.03       # 触发阈值②: 浮动亏损金额达基准权益该比例, 即 权益x3%
+   610  TRAP_HOLD_TRDAYS = 20          # 触发阈值③: 持有满N个交易日(与①或②组合: 时间+空间双达标才触发)
+   612  TRAP_DEEP_LOSS_PCT = 0.25      # 快通道: 浮亏比例达该值(-25%)不看持仓天数, 立即触发(爆雷/深套)
+   613  TRAP_DEEP_MIN_TRDAYS = 2       # 快通道的持有交易日下限(避免T+1买入当日暴跌误触发)
+   614  TRAP_REBOUND_PCT = 0.08        # 择机提醒: 现价较"持仓期最低价"反弹达该比例(8%)时提示择机解套
+   615  TRAP_EXIT_NEAR_PCT = 0.01      # 择机提醒: 现价距"解套价"不足该比例(1%)时提示接近解套
+   616  TRAP_ALERT_COOLDOWN_TRDAYS = 5 # 去重: 同一只股票两次提醒之间至少间隔N个交易日(防刷屏)
+   617  TRAP_MAX_ALERTS = 3            # 去重: 同一只股票最多提醒N次(0=不限); 达上限后每日只在心跳里一行
+   618  TRAP_AUTO_HANDOFF = True       # 提醒后是否自动冻结移交(停止运作+剔除+释放); False=只提醒不移交
+   619  TRAP_EXCLUDE_FROM_PNL = True   # 移交仓位是否从策略盈亏口径剔除(其浮亏不再压制基准权益与手数)
+   620  TRAP_UNBAN_ON_EXIT = True      # 人工卖出平仓后, 是否自动把该股从黑名单移除(恢复交易范围)
+   621  TRAP_NOTIFY_WEBHOOK = True     # 提醒渠道: 是否随 NOTIFY_WEBHOOK 推送到手机(需已配置webhook)
+   622  TRAP_TAG = '套牢移交'           # 写入黑名单的原因前缀(解除剔除时只删带该前缀的条目, 不误删人工条目)
+   623  MANUAL_ALERT_FILE = 'zt_shrink_manual_alert.json'  # 人工介入待办清单(纯文件名, 脚本同目录)
+   626  RISK_CHECK_ON = True           # 避雷排查总开关(False=自动规则与黑名单全部关闭)
+   627  RISK_MIN_PRICE = 2.0           # 自动: 最近已完成交易日收盘低于该值剔除(仙股/面值退市风险, 设0关闭)
+   628  RISK_MAX_DROP_7D = 0.20        # 自动: 近7个交易日累计跌幅超过该值剔除(疑似爆雷出逃, 设1关闭)
+   629  RISK_MAX_DROP_3D = 0.15        # 自动: 近3个交易日累计跌幅超过该值剔除(短期急跌, 疑似业绩暴雷/重大利空, 设1关闭)
+   630  RISK_MAX_DROP_5D = 0.20        # 自动: 近5个交易日累计跌幅超过该值剔除(中期弱势, 设1关闭)
+   631  RISK_LOSS_CHECK = True         # 自动: 最近一期已披露归母净利润<0即剔除; =0或>0保留; 取不到数据也剔除
+   636  RISK_LOSS_KEEP_RECORDS = True  # True=日志同时保留亏损剔除表与剩余候选表; False=仅输出剩余候选表
+   637  RISK_LOSS_OUTPUT_LIMIT = 100   # 每张日志表最多输出N行, 0=不限; 仅影响展示, 不影响筛选
+   638  RISK_LOSS_MISSING_DEGRADE = False  # 2026-10-08用户确认：严格模式(财务数据缺失即剔除，宁可候选少也不买基本面不明的股票)
+   641  RISK_LOSS_PROBE_N = 5              # 财务数据源探测样本数；全部缺失时先自动下载并复检
+   642  RISK_LOSS_AUTO_DOWNLOAD = True     # QMT财务数据缺失时自动下载Profit表；聚宽在线接口无需本地下载
+   644  RISK_LOSS_RECHECK_SEC = 60         # P2-7修复: 自动下载后跨轮次复检的等待秒数(下载异步落盘, 当天立即复检必失败)
+   645  PENDING_SETTLE_MAX_DAYS = 5        # P1-1修复: 待结算登记的最长保留天数(超期无法确认则丢弃并告警)
+   649  RISK_LOSS_ALERT_PUSH = True       # 自动下载后仍不可用时推送【强提醒】(企业微信/钉钉/Server酱, 需先配置 NOTIFY_WEBHOOK)
+   652  BLACKLIST_FILE = 'zt_shrink_blacklist.json'  # 人工风险黑名单(仅纯文件名, 与脚本同目录)
+   653  ST_HIST_FILE = 'zt_shrink_st_hist.json'      # 历史曾用名含ST清单(仅纯文件名, 与脚本同目录)
+   655  RISK_EXCLUDE_ON = True                                # V2.6.83新增: 提前排雷清单开关(True=命中即拒绝买入)
+   657  RISK_EXCLUDE_FILE = 'zt_shrink_risk_exclude.json'      # 排雷清单(仅纯文件名, 与脚本同目录; 由 download_risk_exclude.py 生成)
+   658  RISK_EXCLUDE_MAX_AGE_DAYS = 10                         # 清单最大可用天数(超过则每次启动强提醒; 过期清单仍然拦截=偏紧)
+   663  MA10_HOLD_ON = True            # 总开关: True=涨停后回调期间任一日跌破10日线即剔除(纯增强, 不改买入逻辑)
+   664  MA10_HOLD_BENCH = 'close'      # 判定基准: 'close'=收盘价不低于MA10(默认, 趋势破位语义, 日内插针收回不算破位)
+   666  MA10_HOLD_FROM = 1             # 从T0+第N日开始检查(1=涨停次日开始; 0=含涨停日当日, 涨停日一般不会破)
+   667  MA10_MIN_BARS = 10             # 计算MA10所需最少日线根数(不足则跳过该股不误判, 与MIN_HISTORY_BARS=8协调)
+   677  ZT_LOW_HOLD_ON = True          # ①过滤器: T0后任一已完成交易日最低价<涨停日最低价 -> 剔除(默认开)
+   678  CONFIRM_ENTRY_ON = False       # ②确认进场: 缩倍量阴线后N个交易日内, 放量中阳突破阴线高点 -> 买入
+   684  CONFIRM_YIN_VOL_RATIO = 0.6    # ②判定: 阴线成交量<=前一日量x该比例(缩倍量, 调小更严)
+   685  CONFIRM_YANG_VOL_RATIO = 1.5   # ②判定: 突破日预估全日量>=阴线量x该倍数(放量)
+   686  CONFIRM_BREAK_MAX_DAYS = 3     # ②窗口: 阴线出现后N个交易日内须突破, 过期作废
+   687  MA5_RECLAIM_ON = False         # ③五日线: 缩量跌破5日线后, 放量涨停收复5日线 -> 买入
+   693  MA5_RECLAIM_SHRINK_RATIO = 0.7 # ③判定: 破位日成交量<=基准量x该比例(缩量破位)
+   694  MA5_RECLAIM_MAX_DAYS = 5       # ③窗口: 破位后N个交易日内须收复(超时视为走坏, 不再适用)
+   701  HOT_SECTOR_ON = False           # 热门板块过滤(2026-10-13 用户确认关闭: 广发QMT行情客户端无法获取板块数据,接口不可用时默认降级不硬拦; 若后续接口恢复且需启用, 请改回
+   702  HOT_SECTOR_TOPN = 10           # 取涨停数最多的前N个板块作为热门集合
+   704  HOT_SECTOR_ZT_MIN = 2          # 板块内涨停股数量下限: 即使进入TopN, 涨停数少于该值仍不算热门
+   705  HOT_SECTOR_AUTOFIX_ON_FAIL = True  # 接口失败时自动重取板块数据(V2.6.62起: 内置客户端无板块刷新接口仅重试, 聚宽无实时行情概念直接重取); 首次未下载的数据会凌晨卡死
+   706  HOT_SECTOR_FAIL_HARD = False   # autofix仍失败时: False=降级放过+告警(默认, 不因数据问题误杀, 绝不整天不出手);
+   712  RUN_LOG_FILE = 'zt_shrink_run.log'       # 运行日志文件(纯文件名, 脚本同目录): 客户端日志窗乱码时用记事本看此文件
+   717  NOTIFY_WEBHOOK = ''
+   718  NOTIFY_ALLOWED_HOSTS = ('qyapi.weixin.qq.com', 'oapi.dingtalk.com', 'sctapi.ftqq.com', 'sct.ftqq.com', 'www.pu
+   719  NOTIFY_TIMEOUT = 5             # 推送超时秒数, 发送失败只记日志, 不影响交易
+   720  LOG_ENCODING = 'gbk'           # 客户端日志窗(stdout)编码: QMT为GBK环境, 改utf-8可能导致客户端日志窗乱码
+   721  LOG_FILE_ENCODING = 'utf-8'    # 本地日志文件编码: utf-8(记事本/VSCode均正常显示中文)
+   722  STATE_FILE = 'zt_shrink_state.json'   # 状态文件名: 仅允许纯文件名 (交易必需, 勿注释)
+   726  NAMES_CACHE_FLUSH_SEC = 900
+   727  STRAT_TAG = 'ZSV'              # 策略名/passorder下单参数 (交易必需, 勿注释)
+   730  PNL_TRACK_ON = True            # 盈亏账本与提示总开关(False=退回只记原有买卖日志, 不算盈亏)
+   731  FEE_ON = True                  # 盈亏是否计入交易费用(佣金/印花税/过户费); False=纯价差口径
+   738  FEE_COMMISSION_RATE = 0.0000841  # 股票全佣金费率(双边, 万0.841)
+   739  FEE_COMMISSION_MIN = 5.0         # 股票单笔最低佣金(元, 不足按最低收)
+   740  FEE_STAMP_RATE = 0.0005          # 印花税(仅卖出单边, 万5=0.05%; 国家税种, 不含在佣金内)
+   741  FEE_TRANSFER_RATE = 0.00001      # 过户费(双边, 仅沪市600/601/603/605/688/689): 按正常标准收取万0.1, 买卖各一次; 长期保持不回退
+   745  FEE_PROFILE = {
+   759  FEE_CBOND_SELL_RATE = 0.000050
+   797  PNL_WIN_STEP = 0.03            # 单票浮盈每跨越该比例提示一档(0.03=+3%/+6%/+9%...), 0=关闭
+   798  PNL_LOSS_STEP = 0.03           # 单票浮亏每跨越该比例提示一档(-3%/-6%...), 0=关闭
+   799  PNL_PF_STEP = 0.02             # 组合总收益每跨越初始资金该比例提示一档, 0=关闭
+   800  PNL_DAILY_REPORT_HM = 1500     # 每交易日该时刻(HHMM)输出一次全天盈亏汇总, 0=关闭
+   801  PNL_HALF_HOUR_REPORT_SEC = 1800  # 每半小时(1800秒)输出一次持仓+已清仓盈亏汇总(仅交易时段), 0=关闭
+   802  PNL_BASE_ASSET = 0.0           # 总收益率基准资产(元): 0=用STRATEGY_CAPITAL策略预算, 无预算则取首次运行时的总资产
+   803  PNL_LEDGER_CSV = 'zt_shrink_pnl.csv'   # 盈亏账本CSV(纯文件名, 脚本同目录, Excel可开); 空串=不写文件
+   804  PNL_LEDGER_KEEP = 500          # 状态文件内保留最近N笔明细(CSV始终全量追加)
+   810  G = _G()
+  4909  ORDER_STATUS_MAP = {48: '未报', 49: '待报', 50: '已报', 51: '已报待撤',
+ 10138  ACTIVE_ORDER_STATUS = (48, 49, 50, 51, 52, 55)  # 未报/待报/已报/已报待撤/部成待撤/部成: 委托仍存活
+ 12413  SENT_VERSION = '0.1.0'
+ 12414  SENT_LAG_DAYS = 1                        # 日频情绪滞后交易日数(铁律勿改)
+ 12415  SENT_ZSCORE_WIN = 60                     # 滚动z-score窗口(交易日)
+ 12416  SENT_MIN_PERIODS = 20                    # 滚动统计最小样本数
+ 12417  SENT_WINSORIZE_LOWER = 0.01              # 缩尾下分位
+ 12418  SENT_WINSORIZE_UPPER = 0.99              # 缩尾上分位
+ 12419  SENT_CLIP_LIMIT = 3.0                    # z-score截断限
+ 12420  SENT_EWMA_SPAN = 5                       # EWMA平滑跨度(交易日)
+ 12421  SENT_SENTIMENT_WEIGHTS = [               # 合成指数权重(方向统一: 越高越狂热)
+ 12426  SENT_EVT_FRENZY_ADVPCT = 2.0             # 事件: 上涨广度 > +2σ
+ 12427  SENT_EVT_FRENZY_LIMITUP = 2.0            # 事件: 涨停数 > +2σ
+ 12428  SENT_EVT_PANIC_ADVPCT = -2.0             # 事件: 上涨广度 < -2σ
+ 12429  SENT_REGIME_PANIC_LO = -1.0              # P2-6修复(2026-10-19): 原值-1.5与L1闸门
+ 12434  SENT_REGIME_FRENZY_HI = 1.5              # Regime分档: 合成指数 > +1.5 狂热
+ 12435  SENT_CORE_PARAMS = {                     # 核心可调参数(4个, 参数指纹范围)
+ 12441  SENT_REGIME_PARAMS = {                   # L3 Regime分层 -> 宿主参数覆写(键=宿主常量名)
+ 12446  SENT_SIZE_HOT_TANH_K = 1.0               # tanh缩放陡度
+ 12447  SENT_SIZE_MIN_MULT = 0.7                 # 情绪缩放后的最低仓位乘数(防过度收缩)
+ 12448  SENT_DEGRADE_ALERT_DAYS = 3                # V2.6.76(第十二轮审计问题4): 连续降级达该交易日数即强提醒一次
+ 12449  SENT_MONITOR_MAX_STALE_DAYS = 5          # 情绪数据最大允许陈旧交易日数
+ 12450  SENT_RETRY_SEC = 300                     # 数据拉取失败后的重试间隔(秒)
+ 12451  SENT_HIST_MAX = 260                      # 保留历史行数(约1年交易日)
+ 12452  SENT_BACKFILL_DAYS = 400                 # 回填历史窗口(自然日, 兼容接口限制)
+ 12453  SENT_INDEX_SYMBOL = '000001.SH'          # 情绪指数: 上证指数成交额(内置行情字段)
+ 12454  SENT_COVERAGE_MIN = 0.90                 # V2.6.87: 行情覆盖率下限(实际取到只数/股票池);
+ 12457  SENT_CARRY_LOG_SEC = 1800                # V2.6.87: 沿用上次信号期间, 告警日志最小间隔(秒)
+ 12458  SENT_CACHE_FILE = 'zt_shrink_sent_cache.json'   # V2.6.87: 上一次成功信号缓存(跨重启沿用)
+ 12459  HEARTBEAT_FILE = 'zt_shrink_heartbeat.json'     # V2.6.87: 实例心跳文件(实际名带账号+PID)
+ 12460  HEARTBEAT_SEC = 30                       # V2.6.87: 心跳写入/双实例检查间隔(秒)
+ 12461  HEARTBEAT_STALE_SEC = 120                # V2.6.87: 心跳超过该秒数视为该实例已退出
+ 12462  HEARTBEAT_ALERT_SEC = 300                # V2.6.87: 双实例告警最小间隔(秒)
+ 12464  SENT_STATE = {}                          # 情绪运行状态(运行时字典)

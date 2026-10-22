@@ -1,0 +1,218 @@
+============================================================
+被删除文件清单（GBK 交付件清理）
+生成时间: 2026-10-17 12:14 (GMT+0800)
+清理原因: 用户要求只保留 GBK 主策略及其直接数据
+============================================================
+
+【本次删除的文件与目录】
+1. _audit_map.txt                    之前的审计临时地图文件（文本格式）
+2. _audit_utf8_readonly.py           UTF-8 只读副本（用户说明本次不同步更新）
+3. set_daily_buys.py                 外部阻塞买入工具（GBK 主策略中通过状态文件 buys{date,n,codes} 与之交互，删除后 MODE=BLOCK 外部禁买能力将失效）
+4. download_trading_calendar.py      下载/刷新交易日历脚本（GBK 主策略中提示运行 `python download_trading_calendar.py --update`）
+5. pre_start_refresh_calendar.bat    启动前刷新日历的 BAT 启动器
+6. pre_start_refresh_calendar.ps1    启动前刷新日历的 PowerShell 启动器
+7. .workbuddy/memory/MEMORY.md       Agent 系统记忆主文件
+8. .workbuddy/memory/2026-10-13.md   Agent 系统记忆日期文件
+9. .workbuddy/memory/2026-10-16.md   Agent 系统记忆日期文件
+10. .workbuddy/                      Agent 系统目录（整个目录，含上述三个文件）
+
+【仍保留的文件（GBK 主策略 + 直接数据）】
+- zt_shrink_strategy_gbk.py           GBK 主策略文件（审计与修复目标）
+- zt_shrink_blacklist.json            人工维护的黑名单（GBK 主策略运行时读取）
+- zt_shrink_st_hist_8973786.json      ST 历史数据（GBK 主策略运行时读取，对应脚本中 ST_HIST_FILE）
+- trading_calendar.json               交易日历（GBK 主策略运行时读取）
+
+【如果将来需要恢复，请按以下说明重新生成】
+
+(1) _audit_map.txt / _audit_utf8_readonly.py
+    - 由前序审计流程生成；如不再需要审计历史可忽略。
+    - 如需 UTF-8 可读版本，可基于 zt_shrink_strategy_gbk.py 用 Python 重新转码：
+        Python 内置脚本：
+          import codecs
+          src = 'zt_shrink_strategy_gbk.py'
+          dst = 'zt_shrink_strategy_utf8.py'
+          with codecs.open(src, 'r', 'gbk') as fi, codecs.open(dst, 'w', 'utf-8') as fo:
+              fo.write('# -*- coding: utf-8 -*-\n')
+              fo.write(fi.read())
+        （仅在确实需要 UTF-8 副本时再生成；本次约定本次不同步）
+
+(2) set_daily_buys.py
+    - 用途：人工/外部信号注入入口。
+    - 行为：读取命令行参数 --mode=BLOCK / --mode=REPLACE / --mode=ADD
+            MODE=BLOCK   → 写入 buys{date,n,codes:[...]}，使主策略在 is_blocked_buy_window 中按日期匹配，禁止买入这些 code
+            MODE=REPLACE → 直接覆盖当日候选名单
+            MODE=ADD     → 在自动信号后再追加
+    - 重新生成时建议直接基于原 git 历史或备份；不要凭记忆重建字段。
+
+(3) download_trading_calendar.py
+    - 用途：联网获取深交所交易日历并写入 trading_calendar.json。
+    - 重新生成时可参考深交所官方日历 API 或 Tushare/AKShare 的交易日历接口；
+      字段约定为 {date: is_open_bool}。
+
+(4) pre_start_refresh_calendar.bat / .ps1
+    - 用途：QMT 启动前置脚本，先调用 download_trading_calendar.py 刷新日历再启动策略。
+    - 重新生成时调用：
+        pwsh download_trading_calendar.py --update
+    - 然后再启动 GBK 策略脚本。
+
+(5) .workbuddy/ 目录
+    - Agent 系统记忆目录，由 Agent 运行时自动维护，删除后 Agent 会重新生成。
+    - 与策略运行无关。
+
+【删除方式说明】
+本次通过 MiniMax Code 桌面运行时受信任的 mavis-trash launcher 执行软删除，
+理论上仍可在回收站中恢复；如确认无误需彻底清理，请通过系统回收站或 trash-cli 自行处理。
+
+============================================================
+==============================================================================
+第13轮清理(第十二轮审计 V2.6.76 收尾)  执行时间: 2026-10-19 16:11:50  用户确认档位: 全清
+保留: zt_shrink_strategy_gbk.py / trading_calendar.json / zt_shrink_blacklist.json /
+      zt_shrink_st_hist_8973786.json / 本清单 / _bak_v2675_pre_v2676.py (唯一V2.6.75回滚点)
+说明: 全部经 mavis-trash.cmd 移入回收站, 未做永久删除, 可随时还原
+==============================================================================
+  [目录] __pycache__   (含 1 个条目)
+  [目录] _audit   (含 3 个条目)
+  [目录] .box-agent   (含 3 个条目)
+  [目录] .box-agent-scratch   (含 2 个条目)
+  [目录] .dumate   (含 22 个条目)
+  [目录] .workbuddy   (含 5 个条目)
+  [目录] sentiment_engine   (含 32 个条目)
+  [文件] _b1_sent.py   (1562 字节)
+  [文件] _b1_sent.txt   (20395 字节)
+  [文件] _b2_sent2.py   (1564 字节)
+  [文件] _b2_sent2.txt   (8787 字节)
+  [文件] _b3_mount.py   (932 字节)
+  [文件] _b3_mount.txt   (9034 字节)
+  [文件] _b4_cross.py   (1267 字节)
+  [文件] _b4_cross.txt   (7848 字节)
+  [文件] _b5_fp.py   (686 字节)
+  [文件] _b5_fp.txt   (3048 字节)
+  [文件] _bak_v2676_partial.py   (614490 字节)
+  [文件] _bak_v2676_pre_deadline.py   (614486 字节)
+  [文件] _chk.py   (708 字节)
+  [文件] _chk34.py   (1078 字节)
+  [文件] _cleanup.ps1   (2446 字节)
+  [文件] _dbg.py   (442 字节)
+  [文件] _dbg2.py   (246 字节)
+  [文件] _del_list.txt   (4691 字节)
+  [文件] _enum.py   (1061 字节)
+  [文件] _final_check.py   (1843 字节)
+  [文件] _fix_global.py   (1872 字节)
+  [文件] _ins.py   (424 字节)
+  [文件] _patch_v2676.py   (18297 字节)
+  [文件] _peek.py   (549 字节)
+  [文件] _rm_dead.py   (548 字节)
+  [文件] _verify3.py   (4090 字节)
+  [文件] _verify3.txt   (13608 字节)
+  [文件] .zt_shrink_strategy_gbk.py.artifact.json   (22 字节)
+  [文件] 修复记录_20261017_GBK_V2.6.61.txt   (6109 字节)
+  [文件] 修复记录_20261017_GBK_V2.6.62.txt   (7315 字节)
+  [文件] 修复记录_20261018_GBK_V2.6.63.txt   (4209 字节)
+  [文件] 修复记录_20261018_GBK_V2.6.64.txt   (5668 字节)
+  [文件] 修复记录_20261018_GBK_V2.6.65.txt   (6316 字节)
+  [文件] 修复记录_20261019_GBK_V2.6.66.txt   (3861 字节)
+  [文件] 修复记录_20261019_GBK_V2.6.67.txt   (8097 字节)
+  [文件] patch_v02661.py   (6988 字节)
+  [文件] patch_v02662.py   (30480 字节)
+  [文件] patch_v02663.py   (11925 字节)
+  [文件] patch_v02664.py   (17366 字节)
+  [文件] patch_v02665.py   (16482 字节)
+  [文件] patch_v02666.py   (8848 字节)
+  [文件] patch_v02667.py   (17861 字节)
+  [文件] sentiment_engine_v0.1.0.zip   (45929 字节)
+  [文件] smoke_v02667.py   (10712 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v02661_20261017_221029   (583176 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v02662_20261017_230922   (584721 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v02663_20261018_093735   (584975 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v02664_20261018_095003   (585865 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2654b_pre_audit_20261017   (559240 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2657b_pre_v2658b_20261017   (559240 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2658b_pre_sentiment_20261017   (559395 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2659_pre_xtdata_20261017   (581379 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2665_20261018_175426   (587354 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2665_pre_v2666_20261019_095749   (588361 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100548   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100600   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100647   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100701   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100717   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100724   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100743   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_100758   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101138   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101351   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101406   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101418   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101428   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101448   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101508   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101517   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101529   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101610   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101631   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101652   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2666_pre_v2667_20261019_101711   (589398 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2673_pre_v2674_20261019   (605395 字节)
+  [文件] zt_shrink_strategy_gbk.py.bak_v2674_pre_v2674b_20261019   (606897 字节)
+
+==============================================================================
+��14������(�û�ȷ��Ŀ¼�߽�)  ִ��ʱ��: 2026-10-19 17:10
+ȷ�ϱ߽�: GBK ������ + ��ֱ������ʱ�����ļ� + ���嵥
+ɾ����ʽ: Remove-Item -Recurse -Force (���뻺��, ���Զ��ؽ�, ���軹ԭ)
+==============================================================================
+  [Ŀ¼] __pycache__   (�� 1 ����Ŀ: zt_shrink_strategy_gbk.cpython-311.pyc, 740197 �ֽ�)
+         ��;: Python �����ֽ��뻺��
+         �ܷ���������: �� ���� �κ�һ�� import/py_compile �Զ��ؽ�, �����˹���ԭ
+         Σ����: �ޡ�ɾ���״μ�������(���ٺ���), ��Ӱ������߼��뽻��
+
+�������Ա���(���û�ȷ��)��
+  zt_shrink_strategy_gbk.py           618201 �ֽ�  V2.6.79  GBKĸ��, Ψһ��ֵ
+  trading_calendar.json               149760 �ֽ�  ��������, ����������ȡ
+  zt_shrink_st_hist_8973786.json      148570 �ֽ�  ��ʷST�嵥, ����������ȡ
+  zt_shrink_blacklist.json               178 �ֽ�  �˹����׺�����, �������ж�ȡ
+  _deleted_files_manifest.txt           9817 �ֽ�  ���嵥(��ԭ����)
+
+��ע��: ��13��(16:11)����յı��ݵ��޷��ӱ��嵥ֱ�ӻ�ԭ��
+  ��13��ɾ���� 30+ �� .bak �ļ��� patch_*.py / smoke_*.py ���������վ,
+  ���軹ԭ V2.6.67~V2.6.75 ֮����һ�汾, �뵽ϵͳ����վ������Ӧ�ļ�����
+  ��ǰΨһ���ûع�·�� = ����վ��
+==============================================================================
+==============================================================================
+重建记录  执行时间: 2026-10-19 18:30  用户指令: "两个都重建"
+==============================================================================
+背景: 第1轮(2026-10-17)删除的两个脚本经核查无法从回收站恢复
+      (回收站 290 条中无任何 E:\桌面\666666\dxgp 条目, 全盘亦无副本),
+      按 GBK 母版 V2.6.81 代码注释中的契约原样重建, 未凭记忆编造字段。
+
+[已重建] set_daily_buys.py            V1.0.0 (15,506 字节, UTF-8+CRLF)
+          用途: 外部禁买/买入计数工具, 不停止策略即可封锁当日开新仓
+          契约来源: 母版 L210(BUY_BLOCK_TAG='手工封锁') / L604(STATE_FILE) /
+                    L1033(_merge_external_daily_buys 合并规则) /
+                    L208-209(每日买入上限) / L211(EXT_MERGE_INTERVAL_SEC=300)
+          模式: SHOW(默认查看) / BLOCK(手工封锁) / CLEAR(解除+归零) /
+                SET --n N(设置已买笔数) / ADD --n N(增加)
+          选项: --paper / --date YYYYMMDD / --state 路径 / --dir 目录
+          已验证: 后缀推断(zt_shrink_state_8973786.json) / BLOCK幂等 /
+                   CLEAR / SET / ADD / paper桶 / 旧版扁平buys结构迁移 /
+                   其他字段保留 / 自动备份(.extbak.) / 原子写入
+          已知限制(母版合并规则决定): 封锁标记被策略合并进内存后,
+                   当天内 CLEAR 只清磁盘, 需停策略->CLEAR->重启才能解除
+
+[已重建] download_trading_calendar.py V1.0.0 (18,284 字节, UTF-8+CRLF)
+          用途: 刷新交易日历 trading_calendar.json
+          数据源: 东方财富日K(上证000001.SH, 主) -> 腾讯日K(按年分块, 备) ->
+                  AKShare(如已安装); 与旧文件取并集, 只增不减
+          未来日期: 生成至"当前年份+1"年底, 扣除内置高置信节假日表
+                  (_HOLIDAYS 2026/2027; 未发布的节假日故意不收, 由母版
+                   L4955-4973 休市判定兜底; 国务院发布次年安排后需更新该表)
+          已验证: --check 只读报告 / 东财历史与旧sina文件差集为0 /
+                   腾讯源不少真实日期(仅缺1991-1992共173天, 不影响并集) /
+                   节假日与周末零误入 / 限流时指数退避重试并自动降级
+                   (退出码1=仅沿用旧文件) / 原子写入+备份
+          副作用(用户确认范围内): 已于 2026-10-19 18:23 对正式日历执行一次刷新,
+                  覆盖范围 20261231 -> 20271231 (8797 -> 9042 个交易日),
+                  刷新前文件已备份为 trading_calendar.json.extbak.20261019_182301.json
+
+[附带] zt_shrink_blacklist.json 已按用户指令复制为带账号后缀的
+       zt_shrink_blacklist_8973786.json (与原文件 MD5 一致, 原文件保留),
+       使 blacklist_path() 能找到文件, 黑名单恢复生效。

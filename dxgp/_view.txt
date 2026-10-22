@@ -1,0 +1,97 @@
+ 9749| def _own_order(o, s, side):
+ 9750|     """P1-20/P2-25: 判断柜台委托对象是否属于【本策略对s的指定方向】委托。
+ 9751|     ① 备注前缀(BUY|/SELL|)匹配 → 是; ② 备注非空但不匹配 → 他人委托, 否;
+ 9752|     ③ 备注为空(客户端不回传/截断) → 按策略名STRAT_TAG + ordids登记的委托侧兜底识别。
+ 9753|     P1-20: 策略名过滤防同账号多程序互相误撤; P2-25: 备注缺失不再一律当"无委托"。"""
+ 9754|     rm = str(getattr(o, 'm_strRemark', '') or '')
+ 9755|     pre = ('BUY|' if side == 'buy' else 'SELL|')
+ 9756|     if rm.startswith(pre):
+ 9757|         return True
+ 9758|     if rm.strip():
+ 9759|         return False          # 有备注但不匹配: 视为他人/其他策略委托
+ 9760|     tag = str(getattr(o, 'm_strStrategyName', '') or '')
+ 9761|     if tag and tag != STRAT_TAG:
+ 9762|         return False
+ 9763|     rec = (G.state.get('ordids') or {}).get(s) or {}
+ 9764|     return str(rec.get('side', '')) == side
+ 9765| 
+ 9766| def _find_order_obj(s, side, ords_snap=None):
+ 9767|     """查柜台侧本策略对s的指定方向委托; 返回优先级:
+ 9768|     ① 精确ID命中且仍存活(P2-24: 绝不返回已被取代的旧单当在途) → ② 任一存活委托(最新)
+ 9769|     → ③ 精确ID命中(已终结, 供已成/部成判定) → ④ 最新已终结委托(旧兜底, 维持重报链路)。
+ 9770|     查不到返回None, 查询失败返回'_ERR'哨兵。
+ 9771|     P1-01: ords_snap=锁外预取的委托快照, 传入则直接用快照, 避免锁内重复柜台查询"""
+ 9772|     try:
+ 9773|         ords = ords_snap if ords_snap is not None \
+ 9774|             else (_api(get_trade_detail_data, G.accid, 'STOCK', 'ORDER') or [])
+ 9775|     except Exception:
+ 9776|         return '_ERR'          # 风险2修复: 查询失败与"无委托"区分, 调用方据此 wait 不重发
+ 9777|     rec = (G.state.get('ordids') or {}).get(s) or {}
+ 9778|     rec_id = str(rec.get('id', '')) if str(rec.get('side', '')) == side else ''
+ 9779|     act = None
+ 9780|     act_key = None
+ 9781|     rec_hit = None
+ 9782|     any_best = None
+ 9783|     any_key = None
+ 9784|     for o in ords:
+ 9785|         code = '%s.%s' % (getattr(o, 'm_strInstrumentID', ''), getattr(o, 'm_strExchangeID', ''))
+ 9786|         if code != s or not _own_order(o, s, side):
+ 9787|             continue
+ 9788|         oid = str(getattr(o, 'm_strOrderID', '') or getattr(o, 'm_strOrderSysID', '') or '')
+ 9789|         st = int(getattr(o, 'm_nOrderStatus', -1))
+ 9790|         key = _oid_sort_key(oid)
+ 9791|         if rec_id and oid == rec_id:
+ 9792|             rec_hit = o
+ 9793|             if st in ACTIVE_ORDER_STATUS:
+ 9794|                 return o                      # 精确命中且仍存活: 最优
+ 9795|         if st in ACTIVE_ORDER_STATUS:
+ 9796|             if act_key is None or key >= act_key:
+ 9797|                 act_key, act = key, o
+ 9798|         if any_key is None or key >= any_key:
+ 9799|             any_key, any_best = key, o
+ 9800|     if act is not None:
+ 9801|         return act              # P2-24: 优先存活委托, 防精确匹配命中已终结旧单导致误判/误撤
+ 9802|     if rec_hit is not None:
+ 9803|         return rec_hit
+ 9804|     return any_best
+ 9805| 
+ 9806| def sell_order_obj(s, ords_snap=None):
+ 9807|     """查柜台侧本策略对s的最新卖出委托对象; 查不到返回None, 查询失败返回'_ERR'哨兵。
+ 9808|     P1-3加固: 优先按order_callback记录的最新委托ID精确匹配(状态文件ordids),
+ 9809|     无记录时按ID数值序取最大(旧逻辑字符串序会把'9'排在'100'后, 撤单重报后可能选错
+ 9810|     委托导致误判已终结而重复发单)
+ 9811|     审计修复P1-5: DRY_RUN模拟盘无真实柜台委托, 统一按"无在途委托"处理(成交已即时回报)
+ 9812|     P1-01: ords_snap=锁外预取的委托快照"""
+ 9813|     if DRY_RUN:
+ 9814|         return None
+ 9815|     return _find_order_obj(s, 'sell', ords_snap)
+ 9816| 
+ 9817| 
+ 9818| def cancel_sell_order(o):
+ 9819|     """撤掉卖出委托(仅实盘)。P1-5加固: 只用委托对象自身的OrderID撤单,
+ 9820|     绝不回退到get_last_order_id(那会拿到账户最后一笔任意委托, 可能误撤其它策略/人工的单)"""
+ 9821|     try:
+ 9822|         oid = str(getattr(o, 'm_strOrderID', '') or '')
+ 9823|         if not oid or oid == '-1':
+ 9824|             return False
+ 9825|         if not _api(can_cancel_order, oid, G.accid, 'STOCK'):
+ 9826|             return False
+ 9827|         result = _api(cancel, oid, G.accid, 'STOCK', G.C)
+ 9828|         if result is False:
+ 9829|             return False
+ 9830|         code = '%s.%s' % (getattr(o, 'm_strInstrumentID', ''), getattr(o, 'm_strExchangeID', ''))
+ 9831|         log(disp(code), '卖出撤单指令已发出 OrderID=%s(确认撤销后按最新价重发)' % oid)   # P2-13: 撤单日志带OrderID
+ 9832|         return True
+ 9833|     except Exception:
+ 9834|         traceback.print_exc()
+ 9835|         return False
+ 9836| 
+ 9837| 
+ 9838| def handle_unfilled_sell(s, h, pos_avail, lp, tick=None, ords_snap=None):
+ 9839|     """卖出委托在途/超时处理(P1-2)。返回'wait'=继续等待(不重复发单) /
+ 9840|     'resent'=已重发新委托 / 'giveup'=重试用尽(停止自动卖出, 等待人工或T+1)。
+ 9841|     规则: 在途未超时一律等待; 超时查柜台: 仍存活先撤; 已终结(含部分成交后部撤/已撤)
+ 9842|     按可用持仓余量重发剩余部分(仍受净利闸门与重试上限约束)
+ 9843|     风险3修复: sell_retry_now标记(柜台拒单)时绕过超时等待, 立即重发;
+ 9844|     P1-1加固: 拒单重发同样受SELL_ORDER_RETRIES上限约束, 防持续拒单时全天无限重发废单"""
+ 9845|     now = time.time()

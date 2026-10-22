@@ -1,0 +1,42 @@
+                # V2.6.31: 数据新鲜度硬校验 —— 最后bar时间与当前差 > TICK_STALE_MAX_SEC 判数据冻结。
+                # V2.6.105(2): 判冻结时不再无条件把价格清零。
+                #   病根: 本校验的对象是"1m K线是否新鲜", 但此刻 _t2['lastPrice'] 可能来自
+                #   30 秒前刚取到的 get_full_tick 实时快照(真实时)。双实例共存下 1m 批量取数被
+                #   限流卡到 30~53 秒/批, 于是"慢兜底源"反过来否定了"快数据源" —— 因为 1m 慢,
+                #   就把刚拿到的真实 tick 判死。2026-10-20 09:30:06 实测 002232.SZ 拿到
+                #   15.520/926手, 30 秒后被本函数自己清零, 09:35:36 即被判"停牌/无行情,
+                #   卖出决策挂起"。那是自残, 不是行情故障。
+                #   改法: 有 tick 价就保留价格, 只把量能关掉(vol_ok=False) —— 买入侧本来就靠
+                #   vol_ok 拦截, 卖出侧从"完全无价不许判"变成"有价可判但 volume=0, 放量止盈
+                #   自然不放行"。两侧都更保守或持平, 没有任何一处放松闸门。
+                if not _is_bar_fresh(_last_k):
+                    _stale_gap = -1.0
+                    try:
+                        _stale_gap = float(time.time()) - float(_last_k)
+                    except Exception:
+                        _stale_gap = -1.0
+                    _keep_px = _f(_t2.get('lastPrice'))
+                    _had_vol = _f(_t2.get('volume'))
+                    _prev_src = str(_t2.get('src') or '')
+                    _t2['volume'] = 0.0
+                    _t2['vol_ok'] = False
+                    if _keep_px > 0:
+                        _t2['src'] = '1m_stale_px_kept'
+                    else:
+                        _t2['src'] = '1m_stale'
+                    _t2['stale_gap'] = _stale_gap
+                    if getattr(G, 'tick_stale_logged', None) != G.today:
+                        G.tick_stale_logged = G.today
+                        if _keep_px > 0:
+                            log('[数据告警] V2.6.105(2)新鲜度校验: %s 最后1m bar 距当前%.0f秒'
+                                '(>TICK_STALE_MAX_SEC=%ds), 1m判冻结; 但已持有实时tick价%.3f'
+                                '(来源=%s, tick量%.0f手), 故保留价格、仅关闭量能: '
+                                '买入侧由vol_ok=False拦截, 卖出侧可判价、放量止盈因volume=0不放行'
+                                % (_s, _stale_gap, TICK_STALE_MAX_SEC, _keep_px,
+                                   _prev_src or 'tick', _had_vol))
+                        else:
+                            log('[数据告警] V2.6.31新鲜度校验: %s 最后1m bar 已超 '
+                                'TICK_STALE_MAX_SEC=%ds(实测距当前%.0f秒), 且无可用tick价'
+                                '(冻结前src=%s), 判数据冻结, 该标的行情清零走无行情路径不参与买入'
+                                % (_s, TICK_STALE_MAX_SEC, _stale_gap, _prev_src or '?'))
+                    continue
